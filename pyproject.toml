@@ -1,18 +1,45 @@
 [project]
 name = "opencode-power-pack"
 version = "0.1.0"
-description = "Add your description here"
+description = "Useful command-line tools for working with OpenCode data"
 readme = "README.md"
 authors = [
     { name = "Rafid K.", email = "rafidka@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "rich>=14.0.0",
+    "typer>=0.21.0",
+]
 
 [project.scripts]
-opencode-power-pack = "opencode_power_pack:main"
-op2 = "opencode_power_pack:main"
+opencode-power-pack = "opencode_power_pack.cli:main"
+op2 = "opencode_power_pack.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.11.12,<0.12.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.400",
+    "pytest>=9.0.0",
+    "ruff>=0.15.0",
+]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+venv = ".venv"
+venvPath = "."
+
+[tool.ruff]
+line-length = 88
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["opencode_power_pack"]
