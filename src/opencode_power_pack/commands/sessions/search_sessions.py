@@ -50,6 +50,20 @@ def _display(value: object | None) -> str:
     return text or "—"
 
 
+def _display_directory(value: str | None) -> str:
+    if value is None:
+        return "—"
+    path = Path(value)
+    try:
+        return f"~/{path.relative_to(Path.home())}"
+    except ValueError:
+        return _display(value)
+
+
+def _display_repository(repository: str | None, directory: str | None) -> str:
+    return f"{_display(repository)}\n{_display_directory(directory)}"
+
+
 def _display_updated(value: int | None) -> str:
     if value is None:
         return "—"
@@ -206,7 +220,9 @@ def _search(
         (
             (
                 _display_updated(match.session.updated),
-                _display(match.session.repository or match.session.directory),
+                _display_repository(
+                    match.session.repository, match.session.directory
+                ),
                 _display(match.session.title),
                 _display(match.source.value),
                 _display(match.snippet),

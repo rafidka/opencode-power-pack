@@ -26,7 +26,7 @@ def search_api(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
             updated=1_700_000_000_000,
             project_id="project-1",
             directory="/work/example",
-            repository="example",
+            repository="example-repo",
         ),
         source=SearchSource.TEXT,
         role="assistant",
@@ -185,10 +185,15 @@ def test_search_validation_is_clean(arguments: list[str], message: str) -> None:
 def test_table_output_and_no_match(
     search_api: dict[str, object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    table = runner.invoke(cli.app, ["sessions", "search", "needle"])
+    table = runner.invoke(
+        cli.app, ["sessions", "search", "needle"], env={"COLUMNS": "240"}
+    )
 
     assert table.exit_code == 0
     assert "Updated" in table.output
+    assert "Repository" in table.output
+    assert "example-repo" in table.output
+    assert "/work/example" in table.output
     assert "A title" in table.output
     assert "matching" in table.output
 
@@ -212,6 +217,19 @@ def test_table_output_and_no_match(
     empty = runner.invoke(cli.app, ["sessions", "search", "needle"])
     assert empty.exit_code == 0
     assert empty.output == "No matching sessions.\n"
+
+
+def test_table_abbreviates_home_directory(
+    search_api: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(search_sessions.Path, "home", lambda: Path("/work"))
+
+    table = runner.invoke(
+        cli.app, ["sessions", "search", "needle"], env={"COLUMNS": "240"}
+    )
+
+    assert table.exit_code == 0
+    assert "~/example" in table.output
 
 
 def test_json_and_jsonl_are_exact_and_use_context_database(
