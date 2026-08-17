@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from opencode_power_pack.database import OpenCodeDatabase, resolve_database_path
+from opencode_power_pack.database.client import _SQLITE_SESSION_ID_BIND_BATCH_SIZE
 from opencode_power_pack.errors import DatabaseError
 from opencode_power_pack.models import (
     ListSessionsQuery,
@@ -68,6 +69,53 @@ def test_database_path_read_only_listing_and_literal_unicode_search(
         assert database._connection is not None
         with pytest.raises(sqlite3.OperationalError):
             database._connection.execute("DELETE FROM session")
+
+
+def test_semantic_extraction_uses_rowid_when_part_has_no_id(tmp_path: Path) -> None:
+    path = tmp_path / "opencode.db"
+    _database(path)
+
+    with OpenCodeDatabase(path) as database:
+        documents = database.fetch_semantic_documents({"s"})[0].documents
+
+    extracted = [
+        (document.source_record_id, document.content) for document in documents
+    ]
+    assert extracted == [
+        ("title", "Straße title"),
+        ("1", "a 100%_ literal Straße"),
+    ]
+
+
+def test_semantic_fetch_splits_selected_ids_at_sqlite_bind_batch_limit(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "opencode.db"
+    _database(path)
+    session_ids = tuple(
+        f"bulk-{index:04}" for index in range(_SQLITE_SESSION_ID_BIND_BATCH_SIZE + 1)
+    )
+    connection = sqlite3.connect(path)
+    connection.executemany(
+        "INSERT INTO session (id) VALUES (?)",
+        ((session_id,) for session_id in session_ids),
+    )
+    connection.commit()
+    connection.close()
+
+    with OpenCodeDatabase(path) as database:
+        assert database._connection is not None
+        statements: list[str] = []
+        database._connection.set_trace_callback(statements.append)
+        batches = database.fetch_semantic_documents(session_ids)
+
+    session_queries = [
+        statement
+        for statement in statements
+        if statement.startswith("SELECT id, title, time_updated FROM session")
+    ]
+    assert len(batches) == _SQLITE_SESSION_ID_BIND_BATCH_SIZE + 1
+    assert len(session_queries) == 2
 
 
 def test_incompatible_schema_is_a_friendly_error(tmp_path: Path) -> None:

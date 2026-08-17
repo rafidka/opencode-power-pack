@@ -2,6 +2,12 @@
 
 __version__ = "0.1.0"
 
-from .cli import main
+
+def main() -> None:
+    """Run the command-line interface."""
+    from .cli import main as cli_main
+
+    cli_main()
+
 
 __all__ = ["__version__", "main"]

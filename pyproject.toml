@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "cohere>=5.20.0",
     "rich>=14.0.0",
     "typer>=0.21.0",
 ]

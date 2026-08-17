@@ -22,7 +22,7 @@ def register_command(registrar: CommandRegistrar) -> CommandRegistrar:
 def register_available_commands() -> None:
     """Load optional command modules that expose a ``register`` function."""
     package = __name__
-    for module_name in ("list_sessions", "search_sessions"):
+    for module_name in ("list_sessions", "search_sessions", "index_sessions"):
         qualified_name = f"{package}.{module_name}"
         try:
             module = import_module(qualified_name)
@@ -38,3 +38,9 @@ def register_available_commands() -> None:
 
 
 register_available_commands()
+
+__all__ = [
+    "app",
+    "register_available_commands",
+    "register_command",
+]

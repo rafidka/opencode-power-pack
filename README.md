@@ -60,7 +60,7 @@ exclusive). Sort with `--sort` (`updated`, `created`, `cost`, `tokens`, or
 ### Search
 
 ```bash
-# Search titles and user/assistant text
+# Literal search (the default) of titles and user/assistant text
 op2 sessions search "migration failure"
 
 # Search the current repository with a shorter snippet
@@ -81,11 +81,57 @@ filters, plus `--case-sensitive`, `--max-count`, `--snippet-length`, and the
 Search terms are literal. Repository selectors resolve only when they uniquely
 identify a repository; ambiguous selectors produce an error.
 
+### Semantic search
+
+Semantic search finds sessions from a natural-language description. Semantic
+search and indexing require `COHERE_API_KEY` to already be set in the process
+environment. Configure it through your shell environment or secret manager
+before invoking `op2`.
+
+```bash
+# Search by meaning instead of literal terms
+op2 sessions search "why did deployment fail?" --semantic
+
+# JSON results
+op2 sessions search "authentication issue" --semantic --format json
+
+# Explicitly synchronize the index, or rescan/recreate it
+op2 sessions index
+op2 sessions index --force
+op2 sessions index --rebuild --format json
+```
+
+Semantic indexing uses Cohere's fixed `embed-v4.0` model with 1024 dimensions.
+Table-format indexing shows interactive progress on a TTY; Cohere failures include
+safe, actionable status guidance without exposing request content or credentials.
+
+Semantic search supports the usual title/text selection, `--role`, repository,
+session, archive, agent/provider/model, and time filters. It returns 10 results
+by default; use `-n`/`--max-count` to change that. `--case-sensitive` and the
+sensitive `--include-todos`, `--include-reasoning`, `--include-tool-inputs`, and
+`--include-tool-outputs` flags cannot be used with `--semantic`.
+
 ## Privacy and performance
 
 The CLI searches current materialized session data, not event history. Todos,
 reasoning, and tool input/output may be sensitive or large, so they are omitted
 unless explicitly requested. Broad searches scan selected session content.
+
+For semantic indexing, only session titles and product-visible user/assistant
+text are sent to Cohere. Reasoning, todos, tool inputs, and tool outputs are
+excluded. Credentials are never stored in the semantic sidecar.
+
+OpenCode's database remains read-only. The derived semantic sidecar is stored
+under `${XDG_CACHE_HOME:-~/.cache}/opencode-power-pack/`, separately for each
+source database. `op2 sessions index` accepts `--semantic-index` to use a
+different sidecar path. Semantic searches lazily synchronize before querying;
+there is no daemon or background watcher. A stored fingerprint
+of the main SQLite database plus its WAL skips scans when unchanged. SQLite's
+SHM reader-lock metadata is intentionally not fingerprinted.
+When it changes, per-session `time_updated` revisions compare stable chunk IDs
+and embed only new or modified chunks. Unchanged vectors are retained, while
+removed chunks and sessions are deleted. Initial indexing can make paid API
+calls; later searches against an unchanged source embed only the query.
 
 ## Development
 
@@ -96,4 +142,5 @@ uv run pyright
 uv run op2 --help
 uv run op2 sessions list --help
 uv run op2 sessions search --help
+uv run op2 sessions index --help
 ```

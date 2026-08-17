@@ -4,6 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner, Result
 
 from opencode_power_pack import __version__
@@ -33,6 +34,8 @@ def test_root_sessions_help_and_version() -> None:
     assert sessions_help.exit_code == 0
     assert "list" in sessions_help.stdout
     assert "search" in sessions_help.stdout
+    root_help = runner.invoke(app, ["--help"])
+    assert "setup" not in root_help.stdout
     version = runner.invoke(app, ["--version"])
     assert version.exit_code == 0
     assert version.stdout.strip() == __version__
@@ -43,6 +46,28 @@ def test_root_sessions_help_and_version() -> None:
     command_names = [command.name for command in sessions_app.registered_commands]
     assert command_names.count("list") == 1
     assert command_names.count("search") == 1
+    assert command_names.count("index") == 1
+
+
+def test_help_does_not_load_semantic_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opencode_power_pack.commands.sessions import index_sessions, search_sessions
+
+    def unavailable() -> object:
+        raise AssertionError("semantic dependencies were loaded")
+
+    monkeypatch.setattr(search_sessions, "_semantic_dependencies", unavailable)
+    monkeypatch.setattr(index_sessions, "_semantic_dependencies", unavailable)
+
+    for arguments in (
+        ["--help"],
+        ["sessions", "list", "--help"],
+        ["sessions", "search", "--help"],
+        ["sessions", "index", "--help"],
+    ):
+        result = runner.invoke(app, arguments)
+        assert result.exit_code == 0, result.output
 
 
 def test_list_defaults_database_overrides_and_machine_formats(

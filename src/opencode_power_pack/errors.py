@@ -25,6 +25,10 @@ class DatabaseError(RuntimeCommandError):
     """A database could not be located, opened, or queried."""
 
 
+class EmbeddingError(RuntimeCommandError):
+    """An embedding provider could not create valid vectors."""
+
+
 class TimeParseError(UsageError):
     """A supplied timestamp does not follow the supported time contract."""
 

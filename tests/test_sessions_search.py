@@ -6,11 +6,13 @@ from typer.testing import CliRunner
 
 from opencode_power_pack import cli
 from opencode_power_pack.commands.sessions import search_sessions
+from opencode_power_pack.errors import EmbeddingError
 from opencode_power_pack.models import (
     SearchSessionMatch,
     SearchSource,
     Session,
 )
+from opencode_power_pack.semantic import SemanticSearchMatch
 
 runner = CliRunner()
 
@@ -81,7 +83,10 @@ def search_api(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     return captured
 
 
-def test_defaults_search_active_title_and_text(search_api: dict[str, object]) -> None:
+def test_defaults_search_active_title_and_text(
+    search_api: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("COHERE_API_KEY", raising=False)
     result = runner.invoke(
         cli.app, ["sessions", "search", "needle", "--format", "json"]
     )
@@ -245,3 +250,168 @@ def test_json_and_jsonl_are_exact_and_use_context_database(
     assert jsonl_result.exit_code == 0
     assert json.loads(jsonl_result.output) == expected
     assert search_api["explicit_path"] == Path("/override.db")
+
+
+@pytest.fixture
+def semantic_api(
+    search_api: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> dict[str, object]:
+    captured: dict[str, object] = {"search_api": search_api}
+    session = search_api["match"].session
+    match = SemanticSearchMatch(
+        session=session,
+        source=SearchSource.TEXT,
+        role="assistant",
+        snippet="A semantic match",
+        score=0.98765,
+        match_count=2,
+    )
+
+    def create() -> object:
+        captured["provider_created"] = True
+        return object()
+
+    class Service:
+        def __init__(
+            self, database_path: Path, provider: object, index: Path | None = None
+        ) -> None:
+            captured["database_path"] = database_path
+            captured["provider"] = provider
+            captured["index"] = index
+
+        def search(
+            self, text: str, **options: object
+        ) -> tuple[SemanticSearchMatch, ...]:
+            captured["text"] = text
+            captured["search_options"] = options
+            return (match,)
+
+    monkeypatch.setattr(
+        search_sessions, "_semantic_dependencies", lambda: (create, Service)
+    )
+    captured["match"] = match
+    return captured
+
+
+def test_semantic_search_wires_defaults_filters_and_roles(
+    semantic_api: dict[str, object],
+) -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "sessions",
+            "search",
+            "meaning",
+            "--semantic",
+            "--repo",
+            "one",
+            "--agent",
+            "build",
+            "--provider",
+            "openai",
+            "--model",
+            "model-x",
+            "--include-children",
+            "--include-archived",
+            "--role",
+            "user",
+            "--in",
+            "title",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert semantic_api["provider_created"] is True
+    options = semantic_api["search_options"]
+    assert options["limit"] == 10
+    assert options["sources"] == frozenset({SearchSource.TITLE})
+    assert options["roles"] == frozenset({"user"})
+    filters = options["filters"]
+    assert filters.repository_project_ids == frozenset({"id:one"})
+    assert filters.agents == frozenset({"build"})
+    assert filters.providers == frozenset({"openai"})
+    assert filters.models == frozenset({"model-x"})
+    assert filters.include_children is True
+    assert filters.archive_mode.value == "all"
+    assert "Score" in result.output
+    assert "0.988" in result.output
+
+
+def test_semantic_search_uses_default_sidecar_and_explicit_limit(
+    semantic_api: dict[str, object],
+) -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "sessions",
+            "search",
+            "meaning",
+            "--semantic",
+            "-n",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert semantic_api["index"] is None
+    assert semantic_api["search_options"]["limit"] == 0
+
+
+def test_semantic_json_output(semantic_api: dict[str, object]) -> None:
+    result = runner.invoke(
+        cli.app, ["sessions", "search", "meaning", "--semantic", "--format", "json"]
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output) == [semantic_api["match"].as_dict()]
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        "--include-todos",
+        "--include-reasoning",
+        "--include-tool-inputs",
+        "--include-tool-outputs",
+        "--case-sensitive",
+    ],
+)
+def test_semantic_rejects_unsupported_options(option: str) -> None:
+    result = runner.invoke(
+        cli.app, ["sessions", "search", "meaning", "--semantic", option]
+    )
+
+    assert result.exit_code == 2
+    assert option in result.output
+    assert "--semantic" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_semantic_provider_errors_are_clean(
+    search_api: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def create() -> object:
+        raise EmbeddingError("provider unavailable")
+
+    monkeypatch.setattr(
+        search_sessions, "_semantic_dependencies", lambda: (create, object)
+    )
+    result = runner.invoke(cli.app, ["sessions", "search", "meaning", "--semantic"])
+
+    assert result.exit_code == 1
+    assert "Error: provider unavailable" in result.output
+    assert "Traceback" not in result.output
+    assert "path" not in search_api
+
+
+def test_search_help_omits_removed_semantic_configuration_options() -> None:
+    result = runner.invoke(cli.app, ["sessions", "search", "--help"])
+
+    assert result.exit_code == 0
+    for option in (
+        "--embedding-provider",
+        "--embedding-model",
+        "--embedding-dimension",
+        "--semantic-index",
+    ):
+        assert option not in result.output
