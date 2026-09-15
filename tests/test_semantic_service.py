@@ -147,8 +147,13 @@ def test_sync_progress_reports_metadata_and_deletion_only_work(
     service.sync(on_progress=metadata_events.append)
 
     assert metadata_events == [
-        SemanticSyncPlanned(1, 0, 0, 0),
-        SemanticSessionSynchronized("session-root"),
+        SemanticSyncPlanned(
+            changed_session_count=1,
+            deleted_session_count=0,
+            document_count=0,
+            batch_count=0,
+        ),
+        SemanticSessionSynchronized(session_id="session-root"),
     ]
 
     connection = sqlite3.connect(opencode_database)
@@ -160,8 +165,13 @@ def test_sync_progress_reports_metadata_and_deletion_only_work(
     service.sync(on_progress=deletion_events.append)
 
     assert deletion_events == [
-        SemanticSyncPlanned(0, 1, 0, 0),
-        SemanticSessionsDeleted(("session-other",)),
+        SemanticSyncPlanned(
+            changed_session_count=0,
+            deleted_session_count=1,
+            document_count=0,
+            batch_count=0,
+        ),
+        SemanticSessionsDeleted(session_ids=("session-other",)),
     ]
 
 

@@ -32,6 +32,8 @@ def test_root_sessions_help_and_version() -> None:
     assert runner.invoke(app, ["--help"]).exit_code == 0
     sessions_help = runner.invoke(app, ["sessions", "--help"])
     assert sessions_help.exit_code == 0
+    assert "archive" in sessions_help.stdout
+    assert "delete" in sessions_help.stdout
     assert "list" in sessions_help.stdout
     assert "search" in sessions_help.stdout
     root_help = runner.invoke(app, ["--help"])
@@ -44,9 +46,11 @@ def test_root_sessions_help_and_version() -> None:
 
     register_available_commands()
     command_names = [command.name for command in sessions_app.registered_commands]
+    assert command_names.count("archive") == 1
+    assert command_names.count("delete") == 1
+    assert command_names.count("index") == 1
     assert command_names.count("list") == 1
     assert command_names.count("search") == 1
-    assert command_names.count("index") == 1
 
 
 def test_help_does_not_load_semantic_dependencies(
@@ -62,9 +66,11 @@ def test_help_does_not_load_semantic_dependencies(
 
     for arguments in (
         ["--help"],
+        ["sessions", "archive", "--help"],
+        ["sessions", "delete", "--help"],
+        ["sessions", "index", "--help"],
         ["sessions", "list", "--help"],
         ["sessions", "search", "--help"],
-        ["sessions", "index", "--help"],
     ):
         result = runner.invoke(app, arguments)
         assert result.exit_code == 0, result.output

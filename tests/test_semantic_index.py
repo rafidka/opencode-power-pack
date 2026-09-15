@@ -10,6 +10,7 @@ from opencode_power_pack.semantic.index import (
     SemanticChunk,
     SemanticIndex,
     SemanticIndexError,
+    SourceFingerprint,
     resolve_sidecar_path,
     source_fingerprint,
 )
@@ -26,7 +27,14 @@ def chunk(
     *,
     role: str | None = "user",
 ) -> SemanticChunk:
-    return SemanticChunk(document_id, session_id, "message", role, document_id, vector)
+    return SemanticChunk(
+        document_id=document_id,
+        session_id=session_id,
+        source="message",
+        role=role,
+        content=document_id,
+        embedding=vector,
+    )
 
 
 def test_sidecar_path_is_stable_and_source_fingerprint_tracks_wal(
@@ -85,6 +93,40 @@ def test_identity_roundtrip_mismatch_and_fingerprint_recording(tmp_path: Path) -
     with SemanticIndex.open(path, replace_identity=True) as index:
         assert index.contract.dimension == COHERE_DIMENSION
         assert index.indexed_revisions() == {}
+
+
+def test_stored_fingerprints_survive_their_recorded_form(tmp_path: Path) -> None:
+    # Written by an earlier release: key order differs and the keys are the field
+    # names, which is the private cache format this must keep reading.
+    recorded = (
+        '{"main":{"exists":true,"mtime_ns":7,"size":4},'
+        '"wal":{"exists":false,"mtime_ns":null,"size":null}}'
+    )
+    restored = SourceFingerprint.from_json(recorded)
+    assert restored is not None
+    assert restored.main.mtime_ns == 7
+    assert restored.wal.exists is False
+    assert SourceFingerprint.from_json(restored.to_json()) == restored
+
+
+def test_unreadable_stored_fingerprint_provokes_a_rescan(tmp_path: Path) -> None:
+    path = tmp_path / "index.sqlite"
+    source = tmp_path / "source.db"
+    source.write_bytes(b"data")
+    with SemanticIndex.open(path) as index:
+        index.record_fingerprint(source_fingerprint(source))
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "UPDATE metadata SET value = ? WHERE key = 'source_fingerprint'",
+        ('{"main":{"exists":true}}',),
+    )
+    connection.commit()
+    connection.close()
+
+    with SemanticIndex.open(path) as index:
+        # Absent rather than fatal: an unusable fingerprint only costs a rescan.
+        assert index.stored_fingerprint() is None
+        assert index.status().source_fingerprint is None
 
 
 def test_vectors_roundtrip_rank_filter_and_deterministic_ties(tmp_path: Path) -> None:

@@ -83,11 +83,11 @@ def search_session(
     )
     assert index is not None
     return SearchSessionMatch(
-        session,
-        source,
-        role,
-        snippet(record_content, index, query.snippet_length),
-        len(found),
+        session=session,
+        source=source,
+        role=role,
+        snippet=snippet(record_content, index, query.snippet_length),
+        match_count=len(found),
     )
 
 

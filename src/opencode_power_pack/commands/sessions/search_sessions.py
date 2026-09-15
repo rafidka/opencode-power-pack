@@ -264,10 +264,10 @@ def _search(
         results = matches
 
     if output_format is OutputFormat.JSON:
-        emit_json_array(match.as_dict() for match in results)
+        emit_json_array(results)
         return
     if output_format is OutputFormat.JSONL:
-        emit_jsonl(match.as_dict() for match in results)
+        emit_jsonl(results)
         return
     if not results:
         typer.echo("No matching sessions.")

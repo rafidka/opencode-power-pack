@@ -12,8 +12,13 @@ from opencode_power_pack.repositories import (
 def test_resolves_ranked_selectors_and_cwd_without_existing_paths() -> None:
     resolver = RepositoryResolver(
         (
-            Repository("one", "first", "/work/alpha", ("/old/alpha",)),
-            Repository("two", "second", "/work/beta"),
+            Repository(
+                display_name="one",
+                project_id="first",
+                path="/work/alpha",
+                aliases=("/old/alpha",),
+            ),
+            Repository(display_name="two", project_id="second", path="/work/beta"),
         )
     )
 
@@ -26,8 +31,8 @@ def test_resolves_ranked_selectors_and_cwd_without_existing_paths() -> None:
 def test_ambiguous_repository_selector_lists_candidates() -> None:
     resolver = RepositoryResolver(
         (
-            Repository("one", "one", "/work/api-client"),
-            Repository("two", "two", "/work/api-server"),
+            Repository(display_name="one", project_id="one", path="/work/api-client"),
+            Repository(display_name="two", project_id="two", path="/work/api-server"),
         )
     )
 

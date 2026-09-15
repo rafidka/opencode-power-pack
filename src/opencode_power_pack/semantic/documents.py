@@ -5,8 +5,9 @@ Only titles and product-visible user or assistant text are represented here.
 
 import hashlib
 import json
-from dataclasses import dataclass
 from enum import StrEnum
+
+from ..models import ValueModel
 
 DOCUMENT_CHUNK_CHAR_LIMIT = 3_000
 """Maximum characters in one embedding chunk, below Cohere's input limits."""
@@ -22,16 +23,14 @@ class SemanticDocumentSource(StrEnum):
     TEXT = "text"
 
 
-@dataclass(frozen=True, slots=True)
-class SessionRevision:
+class SessionRevision(ValueModel):
     """The current session revision, represented by OpenCode's update timestamp."""
 
     session_id: str
     time_updated: int | None
 
 
-@dataclass(frozen=True, slots=True)
-class SemanticDocument:
+class SemanticDocument(ValueModel):
     """One stable, safe-to-embed chunk from an OpenCode session record.
 
     ``content`` is the product-visible text for display. ``embedding_content`` is
@@ -50,8 +49,7 @@ class SemanticDocument:
     embedding_content: str
 
 
-@dataclass(frozen=True, slots=True)
-class SessionDocumentBatch:
+class SessionDocumentBatch(ValueModel):
     """Current revision and all safe semantic chunks for one selected session."""
 
     revision: SessionRevision

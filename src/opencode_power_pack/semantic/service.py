@@ -3,12 +3,18 @@
 import re
 import sqlite3
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..errors import OpencodePowerPackError, RuntimeCommandError
-from ..models import ListSessionsQuery, SearchSource, Session, SessionFilter
+from ..models import (
+    ListSessionsQuery,
+    RecordModel,
+    SearchSource,
+    Session,
+    SessionFilter,
+    ValueModel,
+)
 from .cohere import (
     CohereDocumentBatchCompleted,
     CohereEmbedProvider,
@@ -37,16 +43,14 @@ class SemanticServiceError(RuntimeCommandError):
     """A semantic sidecar could not be synchronized or searched safely."""
 
 
-@dataclass(frozen=True, slots=True)
-class SemanticSyncPlanned:
+class SemanticSyncPlanned(ValueModel):
     changed_session_count: int
     deleted_session_count: int
     document_count: int
     batch_count: int
 
 
-@dataclass(frozen=True, slots=True)
-class SemanticEmbeddingBatchCompleted:
+class SemanticEmbeddingBatchCompleted(ValueModel):
     batch_number: int
     batch_count: int
     document_count: int
@@ -54,13 +58,11 @@ class SemanticEmbeddingBatchCompleted:
     total_documents: int
 
 
-@dataclass(frozen=True, slots=True)
-class SemanticSessionSynchronized:
+class SemanticSessionSynchronized(ValueModel):
     session_id: str
 
 
-@dataclass(frozen=True, slots=True)
-class SemanticSessionsDeleted:
+class SemanticSessionsDeleted(ValueModel):
     session_ids: tuple[str, ...]
 
 
@@ -78,8 +80,7 @@ class _ProgressCallbackError(Exception):
         self.error = error
 
 
-@dataclass(frozen=True, slots=True)
-class SemanticSyncResult:
+class SemanticSyncResult(ValueModel):
     """The completed work and freshness state of one synchronization."""
 
     no_op: bool
@@ -96,8 +97,7 @@ class SemanticSyncResult:
         return len(self.deleted_session_ids)
 
 
-@dataclass(frozen=True, slots=True)
-class SemanticSearchMatch:
+class SemanticSearchMatch(RecordModel):
     """One ranked semantic result, grouped from its best retained chunks."""
 
     session: Session
@@ -106,16 +106,6 @@ class SemanticSearchMatch:
     snippet: str
     score: float
     match_count: int
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "session": self.session.as_dict(),
-            "source": self.source.value,
-            "role": self.role,
-            "snippet": self.snippet,
-            "score": self.score,
-            "matchCount": self.match_count,
-        }
 
 
 class SemanticService:
@@ -165,7 +155,12 @@ class SemanticService:
                 replace_identity=rebuild,
             ) as index:
                 if not force and not rebuild and index.stored_fingerprint() == before:
-                    return SemanticSyncResult(True, (), (), False)
+                    return SemanticSyncResult(
+                        no_op=True,
+                        indexed_session_ids=(),
+                        deleted_session_ids=(),
+                        source_changed=False,
+                    )
                 with _open_database(self.source_database) as database:
                     revisions = database.list_semantic_session_revisions()
                     source_revisions = {
@@ -205,10 +200,10 @@ class SemanticService:
                 _emit_progress(
                     on_progress,
                     SemanticSyncPlanned(
-                        len(changed),
-                        len(deleted),
-                        len(new_documents),
-                        document_batch_count(len(new_documents)),
+                        changed_session_count=len(changed),
+                        deleted_session_count=len(deleted),
+                        document_count=len(new_documents),
+                        batch_count=document_batch_count(len(new_documents)),
                     ),
                 )
                 if rebuild:
@@ -252,15 +247,24 @@ class SemanticService:
                         current_document_ids,
                         chunks_by_session.get(session_id, ()),
                     )
-                    _emit_progress(on_progress, SemanticSessionSynchronized(session_id))
+                    _emit_progress(
+                        on_progress, SemanticSessionSynchronized(session_id=session_id)
+                    )
                 if deleted:
                     index.delete_sessions(deleted)
-                    _emit_progress(on_progress, SemanticSessionsDeleted(deleted))
+                    _emit_progress(
+                        on_progress, SemanticSessionsDeleted(session_ids=deleted)
+                    )
 
                 source_changed = source_fingerprint(self.source_database) != before
                 if not source_changed:
                     index.record_fingerprint(before)
-                return SemanticSyncResult(False, changed, deleted, source_changed)
+                return SemanticSyncResult(
+                    no_op=False,
+                    indexed_session_ids=changed,
+                    deleted_session_ids=deleted,
+                    source_changed=source_changed,
+                )
         except _ProgressCallbackError as error:
             raise error.error from error
         except SemanticServiceError:
@@ -374,12 +378,12 @@ def _chunks_by_session(
     for document, vector in zip(documents, vectors, strict=True):
         chunks.setdefault(document.session_id, []).append(
             SemanticChunk(
-                document.id,
-                document.session_id,
-                document.source.value,
-                document.role,
-                document.content,
-                vector,
+                document_id=document.id,
+                session_id=document.session_id,
+                source=document.source.value,
+                role=document.role,
+                content=document.content,
+                embedding=vector,
             )
         )
     return {

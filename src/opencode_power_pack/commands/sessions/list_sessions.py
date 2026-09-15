@@ -18,7 +18,13 @@ from opencode_power_pack.models import (
     SessionFilter,
     SortDirection,
 )
-from opencode_power_pack.output import emit_json_array, emit_jsonl, emit_table
+from opencode_power_pack.output import (
+    emit_json_array,
+    emit_jsonl,
+    emit_table,
+    emit_tsv,
+    is_stdout_terminal,
+)
 from opencode_power_pack.repositories import RepositoryResolver
 from opencode_power_pack.timeparse import parse_time
 
@@ -210,8 +216,10 @@ def _emit_sessions(
     if output_format is OutputFormat.JSONL:
         emit_jsonl(sessions)
         return
+
+    interactive = is_stdout_terminal()
     if not sessions:
-        typer.echo("No sessions found.")
+        typer.echo("No sessions found.", err=not interactive)
         return
 
     columns = ["Updated", "Repository", "Title", "Agent", "Model", "Session ID"]
@@ -230,7 +238,10 @@ def _emit_sessions(
         if include_children:
             row.append(_display(session.parent_id))
         rows.append(row)
-    emit_table(columns, rows)
+    if interactive:
+        emit_table(columns, rows)
+        return
+    emit_tsv(rows)
 
 
 def _format_timestamp(timestamp: int | None) -> str:

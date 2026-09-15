@@ -1,17 +1,18 @@
 """Persistent exact vector storage, separate from OpenCode's source database."""
 
 import hashlib
-import json
 import math
 import os
 import sqlite3
 import struct
 from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Self
+from typing import Annotated, Self
 
+from pydantic import SkipValidation, ValidationError
+
+from ..models import ValueModel
 from .cohere import (
     COHERE_DIMENSION,
     COHERE_MODEL,
@@ -28,62 +29,56 @@ class SemanticIndexError(Exception):
     """An index cannot be safely opened or used."""
 
 
-@dataclass(frozen=True, slots=True)
-class FileFingerprint:
+class FileFingerprint(ValueModel):
     exists: bool
     size: int | None
     mtime_ns: int | None
 
-    def as_dict(self) -> dict[str, bool | int | None]:
-        return {"exists": self.exists, "size": self.size, "mtime_ns": self.mtime_ns}
 
-
-@dataclass(frozen=True, slots=True)
-class SourceFingerprint:
+class SourceFingerprint(ValueModel):
     """Stable source-database change signals used to skip synchronization."""
 
     main: FileFingerprint
     wal: FileFingerprint
 
     def to_json(self) -> str:
-        return json.dumps(
-            {
-                "main": self.main.as_dict(),
-                "wal": self.wal.as_dict(),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+        """Return the private cache representation of this fingerprint."""
+        return self.model_dump_json()
 
     @classmethod
-    def from_json(cls, value: str) -> Self:
+    def from_json(cls, value: str) -> Self | None:
+        """Return the stored fingerprint, or ``None`` when it cannot be read.
+
+        A fingerprint only decides whether synchronization can be skipped, so an
+        unreadable one is treated as absent and provokes a rescan rather than
+        failing the command. That keeps a stored cache from outliving the shape
+        it was written in.
+        """
         try:
-            raw = json.loads(value)
-            values = {name: FileFingerprint(**raw[name]) for name in ("main", "wal")}
-            return cls(**values)
-        except (KeyError, TypeError, json.JSONDecodeError) as error:
-            raise SemanticIndexError("stored source fingerprint is invalid") from error
+            return cls.model_validate_json(value)
+        except ValidationError:
+            return None
 
 
-@dataclass(frozen=True, slots=True)
-class SemanticChunk:
+class SemanticChunk(ValueModel):
     document_id: str
     session_id: str
     source: str
     role: str | None
     content: str
-    embedding: EmbeddingVector
+    # Vectors are produced by the embedding provider or decoded from this index,
+    # and their dimension and finiteness are checked explicitly where they enter.
+    # Re-validating a thousand floats per chunk would dominate indexing.
+    embedding: Annotated[EmbeddingVector, SkipValidation]
     metadata: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class SearchHit:
+class SearchHit(ValueModel):
     chunk: SemanticChunk
     score: float
 
 
-@dataclass(frozen=True, slots=True)
-class SessionSearchResult:
+class SessionSearchResult(ValueModel):
     session_id: str
     hits: tuple[SearchHit, ...]
 
@@ -92,8 +87,7 @@ class SessionSearchResult:
         return self.hits[0].score
 
 
-@dataclass(frozen=True, slots=True)
-class IndexStatus:
+class IndexStatus(ValueModel):
     path: Path
     contract: CohereEmbeddingContract
     source_fingerprint: SourceFingerprint | None
@@ -121,12 +115,13 @@ def source_fingerprint(source_database: str | Path) -> SourceFingerprint:
         try:
             result = path.stat()
         except FileNotFoundError:
-            return FileFingerprint(False, None, None)
-        return FileFingerprint(True, result.st_size, result.st_mtime_ns)
+            return FileFingerprint(exists=False, size=None, mtime_ns=None)
+        return FileFingerprint(
+            exists=True, size=result.st_size, mtime_ns=result.st_mtime_ns
+        )
 
     return SourceFingerprint(
-        fingerprint(database),
-        fingerprint(Path(f"{database}-wal")),
+        main=fingerprint(database), wal=fingerprint(Path(f"{database}-wal"))
     )
 
 
@@ -244,11 +239,15 @@ class SemanticIndex:
     def status(self) -> IndexStatus:
         connection = self._require_connection()
         return IndexStatus(
-            self.path,
-            self.contract,
-            self.stored_fingerprint(),
-            int(connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]),
-            int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]),
+            path=self.path,
+            contract=self.contract,
+            source_fingerprint=self.stored_fingerprint(),
+            session_count=int(
+                connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+            ),
+            chunk_count=int(
+                connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            ),
         )
 
     def stored_fingerprint(self) -> SourceFingerprint | None:
@@ -452,7 +451,7 @@ class SemanticIndex:
                 )
                 / (query_norm * norm)
             )
-            hits.append(SearchHit(chunk, score))
+            hits.append(SearchHit(chunk=chunk, score=score))
         hits.sort(
             key=lambda hit: (-hit.score, hit.chunk.session_id, hit.chunk.document_id)
         )
@@ -461,7 +460,7 @@ class SemanticIndex:
             if len(grouped.setdefault(hit.chunk.session_id, [])) < chunks_per_session:
                 grouped[hit.chunk.session_id].append(hit)
         results = [
-            SessionSearchResult(session_id, tuple(session_hits))
+            SessionSearchResult(session_id=session_id, hits=tuple(session_hits))
             for session_id, session_hits in grouped.items()
         ]
         results.sort(key=lambda result: (-result.score, result.session_id))
@@ -502,13 +501,13 @@ class SemanticIndex:
         values, norm = self._normalize_vector(chunk.embedding)
         return (
             SemanticChunk(
-                chunk.document_id,
-                chunk.session_id,
-                chunk.source,
-                chunk.role,
-                chunk.content,
-                values,
-                chunk.metadata,
+                document_id=chunk.document_id,
+                session_id=chunk.session_id,
+                source=chunk.source,
+                role=chunk.role,
+                content=chunk.content,
+                embedding=values,
+                metadata=chunk.metadata,
             ),
             struct.pack(f"<{COHERE_DIMENSION}f", *values),
             norm,
@@ -540,13 +539,13 @@ class SemanticIndex:
             raise SemanticIndexError("stored embedding has an invalid dimension")
         embedding = tuple(struct.unpack(f"<{COHERE_DIMENSION}f", data))
         return SemanticChunk(
-            row["document_id"],
-            row["session_id"],
-            row["source"],
-            row["role"],
-            row["content"],
-            embedding,
-            row["metadata"],
+            document_id=row["document_id"],
+            session_id=row["session_id"],
+            source=row["source"],
+            role=row["role"],
+            content=row["content"],
+            embedding=embedding,
+            metadata=row["metadata"],
         ), float(row["norm"])
 
     @contextmanager

@@ -41,7 +41,10 @@ def _app(database: Path | None = None) -> typer.Typer:
 
 class _Service:
     result: ClassVar[SemanticSyncResult] = SemanticSyncResult(
-        False, ("session-1",), ("session-2",), False
+        no_op=False,
+        indexed_session_ids=("session-1",),
+        deleted_session_ids=("session-2",),
+        source_changed=False,
     )
     calls: ClassVar[list[tuple[bool, bool]]] = []
     callbacks: ClassVar[list[Callable[[SemanticSyncEvent], None] | None]] = []
@@ -96,7 +99,12 @@ def _patch_command(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     _Service.events = []
     _Service.sync_error = None
     _Service.paths = []
-    _Service.result = SemanticSyncResult(False, ("session-1",), ("session-2",), False)
+    _Service.result = SemanticSyncResult(
+        no_op=False,
+        indexed_session_ids=("session-1",),
+        deleted_session_ids=("session-2",),
+        source_changed=False,
+    )
     return providers
 
 
@@ -145,7 +153,9 @@ def test_incremental_rebuild_force_validation_and_output(
 
 def test_machine_output_and_missing_key_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_command(monkeypatch)
-    _Service.result = SemanticSyncResult(True, (), (), True)
+    _Service.result = SemanticSyncResult(
+        no_op=True, indexed_session_ids=(), deleted_session_ids=(), source_changed=True
+    )
     runner = CliRunner()
 
     machine = runner.invoke(_app(), ["index", "--format", "json"])
@@ -262,13 +272,24 @@ def test_tty_table_progress_uses_stderr_and_preserves_stdout(
     _patch_command(monkeypatch)
     stderr = _force_tty_progress(monkeypatch)
     _Service.events = [
-        SemanticSyncPlanned(1, 1, 2, 1),
-        SemanticEmbeddingBatchCompleted(1, 1, 2, 2, 2),
-        SemanticSessionSynchronized("session-1"),
+        SemanticSyncPlanned(
+            changed_session_count=1,
+            deleted_session_count=1,
+            document_count=2,
+            batch_count=1,
+        ),
+        SemanticEmbeddingBatchCompleted(
+            batch_number=1,
+            batch_count=1,
+            document_count=2,
+            completed_documents=2,
+            total_documents=2,
+        ),
+        SemanticSessionSynchronized(session_id="session-1"),
     ]
     from opencode_power_pack.semantic import SemanticSessionsDeleted
 
-    _Service.events.append(SemanticSessionsDeleted(("session-2",)))
+    _Service.events.append(SemanticSessionsDeleted(session_ids=("session-2",)))
 
     result = CliRunner().invoke(_app(), ["index"])
 
@@ -301,7 +322,9 @@ def test_non_tty_and_machine_formats_do_not_receive_progress(
 def test_no_op_does_not_render_progress_bars(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_command(monkeypatch)
     stderr = _force_tty_progress(monkeypatch)
-    _Service.result = SemanticSyncResult(True, (), (), False)
+    _Service.result = SemanticSyncResult(
+        no_op=True, indexed_session_ids=(), deleted_session_ids=(), source_changed=False
+    )
 
     result = CliRunner().invoke(_app(), ["index"])
 
@@ -313,13 +336,23 @@ def test_no_op_does_not_render_progress_bars(monkeypatch: pytest.MonkeyPatch) ->
 def test_metadata_only_and_deletion_progress(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_command(monkeypatch)
     stderr = _force_tty_progress(monkeypatch)
-    _Service.result = SemanticSyncResult(False, ("session-1",), ("session-2",), False)
+    _Service.result = SemanticSyncResult(
+        no_op=False,
+        indexed_session_ids=("session-1",),
+        deleted_session_ids=("session-2",),
+        source_changed=False,
+    )
     from opencode_power_pack.semantic import SemanticSessionsDeleted
 
     _Service.events = [
-        SemanticSyncPlanned(1, 1, 0, 0),
-        SemanticSessionSynchronized("session-1"),
-        SemanticSessionsDeleted(("session-2",)),
+        SemanticSyncPlanned(
+            changed_session_count=1,
+            deleted_session_count=1,
+            document_count=0,
+            batch_count=0,
+        ),
+        SemanticSessionSynchronized(session_id="session-1"),
+        SemanticSessionsDeleted(session_ids=("session-2",)),
     ]
 
     result = CliRunner().invoke(_app(), ["index"])
@@ -335,7 +368,14 @@ def test_provider_error_stops_tty_progress_without_traceback(
 ) -> None:
     _patch_command(monkeypatch)
     stderr = _force_tty_progress(monkeypatch)
-    _Service.events = [SemanticSyncPlanned(1, 0, 1, 1)]
+    _Service.events = [
+        SemanticSyncPlanned(
+            changed_session_count=1,
+            deleted_session_count=0,
+            document_count=1,
+            batch_count=1,
+        )
+    ]
     _Service.sync_error = EmbeddingError("embedding failed")
     from opencode_power_pack.commands.sessions import index_sessions
 

@@ -2,12 +2,12 @@
 
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import cast
 
+from pydantic import BaseModel
 from rich.console import Console
 from rich.table import Table
 
@@ -22,10 +22,8 @@ def to_jsonable(value: object) -> JSONValue:
     """Convert shared models and standard scalar values to JSON-safe values."""
     if value is None or isinstance(value, bool | int | float | str):
         return value
-    if hasattr(value, "as_dict"):
-        return to_jsonable(value.as_dict())  # type: ignore[union-attr]
-    if is_dataclass(value) and not isinstance(value, type):
-        return to_jsonable(asdict(value))
+    if isinstance(value, BaseModel):
+        return to_jsonable(value.model_dump(by_alias=True, mode="json"))
     if isinstance(value, Enum):
         return to_jsonable(value.value)
     if isinstance(value, datetime | date):
@@ -71,3 +69,25 @@ def emit_table(
     for row in rows:
         table.add_row(*(str(cell) for cell in row))
     Console().print(table)
+
+
+def is_stdout_terminal() -> bool:
+    """Return whether stdout is an interactive terminal."""
+    return Console().is_terminal
+
+
+def emit_tsv(rows: Iterable[Sequence[object]]) -> None:
+    """Write rows as tab-separated values for piping into other commands.
+
+    Tabs, carriage returns, and newlines inside a cell are replaced with spaces so
+    that one record always occupies one line.
+    """
+    for row in rows:
+        print("\t".join(_tsv_cell(cell) for cell in row))
+
+
+def _tsv_cell(value: object) -> str:
+    text = str(value)
+    for character in ("\t", "\r", "\n"):
+        text = text.replace(character, " ")
+    return text.strip()

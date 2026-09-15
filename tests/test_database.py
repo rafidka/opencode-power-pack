@@ -60,10 +60,10 @@ def test_database_path_read_only_listing_and_literal_unicode_search(
 
     with OpenCodeDatabase(path) as database:
         assert database.list_sessions(ListSessionsQuery())[0].repository == "repo"
-        match = database.search_sessions(SearchSessionsQuery("STRASSE"))[0]
+        match = database.search_sessions(SearchSessionsQuery(text="STRASSE"))[0]
         assert match.source is SearchSource.TITLE
         assert (
-            database.search_sessions(SearchSessionsQuery("100%_"))[0].source
+            database.search_sessions(SearchSessionsQuery(text="100%_"))[0].source
             is SearchSource.TEXT
         )
         assert database._connection is not None
@@ -174,7 +174,7 @@ def test_list_and_search_id_tiebreaking_follows_their_contracts(
         ascending = database.list_sessions(
             ListSessionsQuery(direction=SortDirection.ASC)
         )
-        matches = database.search_sessions(SearchSessionsQuery("needle"))
+        matches = database.search_sessions(SearchSessionsQuery(text="needle"))
 
     assert [session.id for session in descending[:2]] == ["tie-b", "tie-a"]
     assert [session.id for session in ascending[-2:]] == ["tie-a", "tie-b"]

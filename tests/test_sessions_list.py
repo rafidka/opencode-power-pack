@@ -116,24 +116,53 @@ def test_maps_options_to_query(monkeypatch: object) -> None:
     assert database.query.filters.models == frozenset({"gpt"})
 
 
+# The published JSON shape, written out rather than derived from the models, so a
+# change to how they serialize cannot quietly change the contract.
+_EXPECTED_SESSION = {
+    "id": "ses_1",
+    "title": "A session",
+    "created": 1_700_000_000_000,
+    "updated": 1_700_000_100_000,
+    "projectId": "project-1",
+    "directory": "/work/project",
+    "parentId": None,
+    "repository": "project",
+    "agent": "build",
+    "provider": "openai",
+    "model": "gpt",
+    "cost": None,
+    "tokens": {
+        "input": 1,
+        "output": 2,
+        "reasoning": 3,
+        "cacheRead": 4,
+        "cacheWrite": 5,
+        "total": 15,
+    },
+    "archived": None,
+    "archivedAt": None,
+}
+
+
 def test_json_and_jsonl_output(monkeypatch: object) -> None:
     database = _Database([_session()], [])
     _patch_database(monkeypatch, database)
 
     json_result = CliRunner().invoke(_app(), ["list", "--format", "json"])
     assert json_result.exit_code == 0
-    assert json.loads(json_result.stdout) == [_session().as_dict()]
+    assert json.loads(json_result.stdout) == [_EXPECTED_SESSION]
 
     jsonl_result = CliRunner().invoke(_app(), ["list", "--format", "jsonl"])
     assert jsonl_result.exit_code == 0
     assert [json.loads(line) for line in jsonl_result.stdout.splitlines()] == [
-        _session().as_dict()
+        _EXPECTED_SESSION
     ]
 
 
 def test_table_empty_and_validation(monkeypatch: object) -> None:
     database = _Database([], [])
     _patch_database(monkeypatch, database)
+    _force_terminal(monkeypatch, True)
     runner = CliRunner()
 
     empty = runner.invoke(_app(), ["list"])
@@ -151,6 +180,34 @@ def test_table_empty_and_validation(monkeypatch: object) -> None:
     invalid = runner.invoke(_app(), ["list", "--repo", "one", "--cwd"])
     assert invalid.exit_code == 2
     assert "--repo cannot be used with --cwd" in invalid.stderr
+
+
+def test_piped_output_is_tab_separated(monkeypatch: object) -> None:
+    database = _Database([_session(), _session(id="ses_2", title="Tab\there")], [])
+    _patch_database(monkeypatch, database)
+    _force_terminal(monkeypatch, False)
+    runner = CliRunner()
+
+    piped = runner.invoke(_app(), ["list"])
+    assert piped.exit_code == 0
+    lines = piped.stdout.splitlines()
+    assert [line.split("\t")[-1] for line in lines] == ["ses_1", "ses_2"]
+    assert "Session ID" not in piped.stdout
+    assert all(len(line.split("\t")) == 6 for line in lines)
+
+    database.sessions = []
+    empty = runner.invoke(_app(), ["list"])
+    assert empty.exit_code == 0
+    assert empty.stdout == ""
+    assert "No sessions found." in empty.stderr
+
+
+def _force_terminal(monkeypatch: object, value: bool) -> None:
+    from opencode_power_pack.commands.sessions import list_sessions
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        list_sessions, "is_stdout_terminal", lambda: value
+    )
 
 
 def test_global_context_and_repository_selection(monkeypatch: object) -> None:

@@ -5,7 +5,6 @@ import math
 import os
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from typing import Protocol, cast
 
 import cohere
@@ -14,6 +13,7 @@ from cohere.core import ApiError, ParsingError
 from pydantic import ValidationError
 
 from ..errors import EmbeddingError
+from ..models import ValueModel
 
 COHERE_MODEL = "embed-v4.0"
 COHERE_DIMENSION = 1024
@@ -33,8 +33,7 @@ type EmbeddingVector = tuple[float, ...]
 type EmbeddingBatch = tuple[EmbeddingVector, ...]
 
 
-@dataclass(frozen=True, slots=True)
-class CohereDocumentBatchCompleted:
+class CohereDocumentBatchCompleted(ValueModel):
     """Progress reported after one document embedding batch succeeds."""
 
     batch_number: int
@@ -54,8 +53,7 @@ def document_batch_count(count: int) -> int:
     return (count + COHERE_MAX_TEXTS_PER_REQUEST - 1) // COHERE_MAX_TEXTS_PER_REQUEST
 
 
-@dataclass(frozen=True, slots=True)
-class CohereEmbeddingContract:
+class CohereEmbeddingContract(ValueModel):
     """The fixed vector space stored in semantic sidecars."""
 
     model: str = COHERE_MODEL

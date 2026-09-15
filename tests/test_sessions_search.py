@@ -16,6 +16,26 @@ from opencode_power_pack.semantic import SemanticSearchMatch
 
 runner = CliRunner()
 
+# The published JSON shape, written out rather than derived from the models, so a
+# change to how they serialize cannot quietly change the contract.
+_EXPECTED_SESSION = {
+    "id": "ses_123",
+    "title": "A title\nwith whitespace",
+    "created": 1,
+    "updated": 1_700_000_000_000,
+    "projectId": "project-1",
+    "directory": "/work/example",
+    "parentId": None,
+    "repository": "example-repo",
+    "agent": None,
+    "provider": None,
+    "model": None,
+    "cost": None,
+    "tokens": None,
+    "archived": None,
+    "archivedAt": None,
+}
+
 
 @pytest.fixture
 def search_api(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
@@ -243,7 +263,13 @@ def test_json_and_jsonl_are_exact_and_use_context_database(
     arguments = ["--database", "/override.db", "sessions", "search", "needle"]
     json_result = runner.invoke(cli.app, [*arguments, "--format", "json"])
     jsonl_result = runner.invoke(cli.app, [*arguments, "--format", "jsonl"])
-    expected = search_api["match"].as_dict()
+    expected = {
+        "session": _EXPECTED_SESSION,
+        "source": "text",
+        "role": "assistant",
+        "snippet": "A matching\nsnippet",
+        "matchCount": 2,
+    }
 
     assert json_result.exit_code == 0
     assert json.loads(json_result.output) == [expected]
@@ -363,7 +389,16 @@ def test_semantic_json_output(semantic_api: dict[str, object]) -> None:
     )
 
     assert result.exit_code == 0
-    assert json.loads(result.output) == [semantic_api["match"].as_dict()]
+    assert json.loads(result.output) == [
+        {
+            "session": _EXPECTED_SESSION,
+            "source": "text",
+            "role": "assistant",
+            "snippet": "A semantic match",
+            "score": 0.98765,
+            "matchCount": 2,
+        }
+    ]
 
 
 @pytest.mark.parametrize(

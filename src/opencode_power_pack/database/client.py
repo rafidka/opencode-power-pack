@@ -9,11 +9,13 @@ from urllib.parse import quote
 
 from ..errors import DatabaseError
 from ..models import (
+    ArchiveMode,
     ListSessionsQuery,
     Repository,
     SearchSessionMatch,
     SearchSessionsQuery,
     Session,
+    SessionFilter,
 )
 from ..semantic.documents import (
     SemanticDocument,
@@ -142,6 +144,20 @@ class OpenCodeDatabase:
         with self._read_transaction():
             return sort_and_limit_sessions(
                 filtered_sessions(self._connection_or_error(), query.filters), query
+            )
+
+    def all_sessions(self) -> tuple[Session, ...]:
+        """Return every session, including archived sessions and children.
+
+        Session selectors must be resolvable regardless of the filters that a
+        listing command would apply, so this deliberately ignores them.
+        """
+        with self._read_transaction():
+            return tuple(
+                filtered_sessions(
+                    self._connection_or_error(),
+                    SessionFilter(include_children=True, archive_mode=ArchiveMode.ALL),
+                )
             )
 
     def search_sessions(

@@ -29,6 +29,10 @@ class EmbeddingError(RuntimeCommandError):
     """An embedding provider could not create valid vectors."""
 
 
+class OpencodeServerError(RuntimeCommandError):
+    """The OpenCode server could not be started or did not accept a request."""
+
+
 class TimeParseError(UsageError):
     """A supplied timestamp does not follow the supported time contract."""
 

@@ -31,6 +31,11 @@ OPENCODE_DATABASE=/path/to/opencode.db op2 sessions search "timeout"
 ```
 
 The database is opened read-only with SQLite `mode=ro` and `query_only`.
+`sessions archive` and `sessions delete` are the exceptions: they do not write to
+SQLite themselves but ask OpenCode to perform the change. When they have to start
+their own server, `--database` must name a standard
+`<data home>/opencode/opencode.db` path, because OpenCode resolves its database
+from its data directory rather than from an option.
 
 ## Sessions
 
@@ -56,6 +61,48 @@ active root sessions are returned. Use `--include-children`,
 `--agent`, `--provider`, `--model`, `--since`, and `--until` (which is
 exclusive). Sort with `--sort` (`updated`, `created`, `cost`, `tokens`, or
 `title`); formats are `table`, `json`, and `jsonl`.
+
+`table` is meant for reading. On a terminal it renders a bordered table; when
+stdout is redirected or piped it prints the same columns as tab-separated
+values with no header, so results can be fed to other commands.
+
+### Archive and delete
+
+```bash
+# One or more session IDs, or any prefix identifying exactly one session
+op2 sessions archive ses_8a3f2c ses_4b91
+op2 sessions delete ses_8a3f2c --yes
+
+# Archive everything that has not been touched in 90 days
+op2 sessions list --until 90d | op2 sessions archive
+
+# Delete the sessions of a repository that were already archived
+op2 sessions list --repo ~/src/spike --archived-only | op2 sessions delete --yes
+```
+
+Both commands take session IDs as arguments, and read them from standard input
+when no argument is given. Piped input may be the tab-separated `table` output
+of `sessions list` or `sessions search`, their `json` or `jsonl` output, or one
+session ID per line. Selectors resolve only when they identify a single session;
+ambiguous prefixes produce an error and nothing is changed.
+
+Archiving is reversible in OpenCode and keeps all session content; archived
+sessions are skipped by `sessions list` and `sessions search` unless
+`--include-archived` or `--archived-only` is given. Deletion is permanent and
+also removes child sessions, messages, and the session's event history, so it
+asks for confirmation unless `--yes` is passed, and refuses to run without
+`--yes` when it cannot prompt.
+
+Neither command modifies SQLite directly; each calls OpenCode's own session
+endpoints, which keeps cascading rules owned by OpenCode. If a local OpenCode
+server is already running on the same database — `opencode serve`, `opencode web`,
+or a TUI — it is reused, so the change is fast and its connected clients see the
+result immediately. A server is identified by the database file it holds open, not
+by its port, so a server backed by a different data directory is never used.
+Otherwise a short-lived `opencode serve` is started and stopped around the batch,
+which requires the `opencode` CLI on `PATH` and pays roughly a second of startup
+once per command. Exit status is `1` if any session failed, and each failure is
+reported with its session ID.
 
 ### Search
 
@@ -121,13 +168,16 @@ For semantic indexing, only session titles and product-visible user/assistant
 text are sent to Cohere. Reasoning, todos, tool inputs, and tool outputs are
 excluded. Credentials are never stored in the semantic sidecar.
 
-OpenCode's database remains read-only. The derived semantic sidecar is stored
+OpenCode's database remains read-only for every reading command. The derived
+semantic sidecar is stored
 under `${XDG_CACHE_HOME:-~/.cache}/opencode-power-pack/`, separately for each
 source database. `op2 sessions index` accepts `--semantic-index` to use a
 different sidecar path. Semantic searches lazily synchronize before querying;
 there is no daemon or background watcher. A stored fingerprint
 of the main SQLite database plus its WAL skips scans when unchanged. SQLite's
-SHM reader-lock metadata is intentionally not fingerprinted.
+SHM reader-lock metadata is intentionally not fingerprinted. A fingerprint that
+cannot be read is treated as absent, so a sidecar written by another release
+costs a rescan rather than an error.
 When it changes, per-session `time_updated` revisions compare stable chunk IDs
 and embed only new or modified chunks. Unchanged vectors are retained, while
 removed chunks and sessions are deleted. Initial indexing can make paid API
@@ -143,4 +193,6 @@ uv run op2 --help
 uv run op2 sessions list --help
 uv run op2 sessions search --help
 uv run op2 sessions index --help
+uv run op2 sessions archive --help
+uv run op2 sessions delete --help
 ```
