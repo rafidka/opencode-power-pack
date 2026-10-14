@@ -28,6 +28,7 @@ def register_available_commands() -> None:
         "index_sessions",
         "list_sessions",
         "search_sessions",
+        "show_sessions",
     ):
         qualified_name = f"{package}.{module_name}"
         try:

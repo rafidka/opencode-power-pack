@@ -16,6 +16,8 @@ from ..models import (
     SearchSessionsQuery,
     Session,
     SessionFilter,
+    Transcript,
+    TranscriptQuery,
 )
 from ..semantic.documents import (
     SemanticDocument,
@@ -27,6 +29,7 @@ from ..semantic.documents import (
 from ._utils import json_object, string
 from .search import search_session, sort_and_limit_matches
 from .sessions import filtered_sessions, sort_and_limit_sessions
+from .transcripts import session_transcripts
 
 _REQUIRED_COLUMNS = {
     "project": {"id", "worktree", "name"},
@@ -75,7 +78,11 @@ class OpenCodeDatabase:
         self.path = path
         self._connection: sqlite3.Connection | None = None
         self._context_transaction = False
-        self._part_schema_has_id_column = False
+        self._columns: dict[str, frozenset[str]] = {}
+
+    @property
+    def _part_schema_has_id_column(self) -> bool:
+        return "id" in self._columns.get("part", frozenset())
 
     def __enter__(self) -> OpenCodeDatabase:
         self.open()
@@ -173,6 +180,24 @@ class OpenCodeDatabase:
         return sort_and_limit_matches(
             [match for match in matches if match is not None], query
         )
+
+    def fetch_transcripts(self, query: TranscriptQuery) -> tuple[Transcript, ...]:
+        """Return full conversation transcripts for the requested session IDs.
+
+        Session selectors must be resolvable regardless of the filters that a
+        listing command would apply, so this deliberately ignores them, the
+        same way ``all_sessions`` does.
+        """
+        with self._read_transaction():
+            connection = self._connection_or_error()
+            sessions_by_id = {
+                session.id: session
+                for session in filtered_sessions(
+                    connection,
+                    SessionFilter(include_children=True, archive_mode=ArchiveMode.ALL),
+                )
+            }
+            return session_transcripts(connection, query, sessions_by_id, self._columns)
 
     def list_semantic_session_revisions(self) -> Collection[SessionRevision]:
         """Return a lazy, sized view of session revisions.
@@ -294,7 +319,7 @@ class OpenCodeDatabase:
             )
         }
         missing: list[str] = []
-        part_columns: set[str] = set()
+        columns: dict[str, frozenset[str]] = {}
         for table, required in _REQUIRED_COLUMNS.items():
             if table not in tables:
                 missing.append(table)
@@ -302,15 +327,14 @@ class OpenCodeDatabase:
             actual = {
                 row["name"] for row in connection.execute(f"PRAGMA table_info({table})")
             }
-            if table == "part":
-                part_columns = actual
+            columns[table] = frozenset(actual)
             absent = sorted(required - actual)
             if absent:
                 missing.append(f"{table} ({', '.join(absent)})")
         if missing:
             msg = "incompatible OpenCode database schema: missing " + "; ".join(missing)
             raise DatabaseError(msg)
-        self._part_schema_has_id_column = "id" in part_columns
+        self._columns = columns
 
     @contextmanager
     def _read_transaction(self) -> Generator[None]:

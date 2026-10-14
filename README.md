@@ -66,6 +66,103 @@ exclusive). Sort with `--sort` (`updated`, `created`, `cost`, `tokens`, or
 stdout is redirected or piped it prints the same columns as tab-separated
 values with no header, so results can be fed to other commands.
 
+### Show
+
+```bash
+# A single conversation on stdout
+op2 sessions show ses_8a3f2c
+
+# Write a file to reference from another conversation
+op2 sessions show ses_8a3f2c -o conversation.md
+
+# The most recent conversation in the current repository
+op2 sessions list --cwd --max-count 1 | op2 sessions show
+
+# Several related conversations in one document, for summarizing
+op2 sessions search "rate limit" --max-count 3 | op2 sessions show
+
+# Full fidelity, including what every tool call sent and returned
+op2 sessions show ses_8a3f2c --include-reasoning --include-tool-inputs --include-tool-outputs
+```
+
+`sessions show` renders one or more stored sessions as a transcript, suitable
+for pasting or `@`-referencing into another conversation, or for feeding to a
+summarizer. Output goes to stdout by default; `-o`/`--output` writes to a file
+instead, overwriting it, matching shell redirection.
+
+The transcript's structure is XML tags; message content is embedded verbatim,
+abridged here to a session, one message, and a couple of tool calls:
+
+```
+<oc-session
+  id="ses_f76551cebffexrwFNP7m17fSwk"
+  title="Conversation dump to markdown command"
+  repository="opencode-power-pack"
+  agent="orchestrate"
+  model="claude-opus-5"
+  provider="cohere-llm-gateway"
+  created="2026-09-15T18:15:03Z"
+  updated="2026-09-15T18:56:21Z"
+  cost="0.0000"
+  tokens="1907779"
+  messages="32"
+>
+<oc-message n="374" role="assistant" agent="plan" model="claude-opus-5" time="2026-09-11T19:18:04Z">
+<oc-text>
+Here's the guide. One decision up front, because the two failure modes overlap.
+
+## Which task exposes both
+
+**The `uccs` project inside `submittal-review`.** Its corpus is exactly the pair you want:
+</oc-text>
+<oc-tool name="bash" status="completed" title="Check repository status" />
+<oc-tool name="task" status="completed" title="Explore the codebase" session="ses_04fccdc8cffe">
+</oc-tool>
+</oc-message>
+<oc-todos>
+<oc-todo status="completed">Investigate the parser</oc-todo>
+</oc-todos>
+</oc-session>
+```
+
+Every Markdown token in the output is verbatim conversation content; the
+transcript's own structure is XML tags only. Text inside `<oc-text>` is
+byte-for-byte verbatim and never escaped or indented, because message content
+is arbitrary Markdown written by users and models and re-escaping it would
+corrupt it. Attribute values, being metadata rather than content, are
+XML-escaped as usual.
+
+Tags carry an `oc-` prefix rather than plain names like `<message>` or
+`<file>`, because unprefixed names collide with real conversation content —
+`<file>` alone appears in 141 message bodies, from the `read` tool's own
+output format — while `oc-` collides in none. As a last-resort guarantee, if
+content ever contains the literal `<oc-`, the whole document switches to a
+deterministic hash-suffixed prefix such as `oc-a3f9-`.
+
+Sub-agent sessions started by the `task` tool nest their own transcript inside
+the `<oc-tool>` element that spawned them, recursively, only with
+`--include-children`; otherwise that element is empty, as in the example
+above. Tool inputs and outputs, when opted in, appear as `<oc-input>` and
+`<oc-output>` children of `<oc-tool>`; a truncated `<oc-output>` carries a
+`truncated` attribute giving the number of characters omitted.
+
+Session selectors work exactly like `sessions archive` and `sessions delete`:
+full IDs or any prefix identifying exactly one session, given as arguments or
+read from standard input when no argument is given, including the `table`,
+`json`, or `jsonl` output of `sessions list` or `sessions search`. Multiple
+sessions are consecutive `<oc-session>` elements with no separator, which is
+what makes `op2 sessions search "..." | op2 sessions show` useful for feeding
+several related conversations into a single summary.
+
+By default the transcript contains user and assistant text plus one line per
+tool call giving the tool, its title, and its status. Tool inputs and outputs
+account for roughly 90% of stored conversation bytes, so including them turns
+a 4,000–11,000 token transcript into a 40,000–350,000 token one; they are
+opt-in via `--include-tool-inputs` and `--include-tool-outputs`, each capped
+per call by `--max-tool-chars` (default 2000, 0 for unlimited). Reasoning is
+omitted by default, consistent with `sessions search`, and included with
+`--include-reasoning`. `--include-todos` appends the session todo list.
+
 ### Archive and delete
 
 ```bash
@@ -163,6 +260,8 @@ sensitive `--include-todos`, `--include-reasoning`, `--include-tool-inputs`, and
 The CLI searches current materialized session data, not event history. Todos,
 reasoning, and tool input/output may be sensitive or large, so they are omitted
 unless explicitly requested. Broad searches scan selected session content.
+`sessions show` follows the same rule: reasoning, todos, and tool inputs and
+outputs are omitted unless explicitly requested.
 
 For semantic indexing, only session titles and product-visible user/assistant
 text are sent to Cohere. Reasoning, todos, tool inputs, and tool outputs are
@@ -191,6 +290,7 @@ uv run ruff check .
 uv run pyright
 uv run op2 --help
 uv run op2 sessions list --help
+uv run op2 sessions show --help
 uv run op2 sessions search --help
 uv run op2 sessions index --help
 uv run op2 sessions archive --help

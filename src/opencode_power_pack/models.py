@@ -83,6 +83,23 @@ class SearchSource(StrEnum):
     TOOL_OUTPUT = "tool-output"
 
 
+class PartKind(StrEnum):
+    """The part kinds that carry conversation content.
+
+    OpenCode's ``step-start`` and ``step-finish`` bookkeeping parts are
+    deliberately absent because their token and cost data is already carried
+    on the message.
+    """
+
+    TEXT = "text"
+    REASONING = "reasoning"
+    TOOL = "tool"
+    PATCH = "patch"
+    FILE = "file"
+    COMPACTION = "compaction"
+    AGENT = "agent"
+
+
 class Project(RecordModel):
     """An OpenCode project, its canonical worktree, and known directory aliases."""
 
@@ -211,3 +228,83 @@ class SearchSessionsOutput(ValueModel):
     query: SearchSessionsQuery
     matches: tuple[SearchSessionMatch, ...]
     total: int
+
+
+class TranscriptPart(RecordModel):
+    """One rendered unit of a message.
+
+    A flat union discriminated by ``kind``, because parts are shallow and a
+    flat record keeps the renderer a simple dispatch. ``text`` carries the
+    body of ``TEXT`` and ``REASONING``. The ``tool_*`` fields describe a
+    ``TOOL`` call, where ``tool_input`` and ``tool_output`` are
+    already-serialized text. ``child_session_id`` is set for a ``task`` tool
+    call that spawned a sub-agent session. ``files`` lists the paths a
+    ``PATCH`` touched. ``filename`` names a ``FILE`` attachment.
+    ``compaction_auto`` records whether a ``COMPACTION`` was automatic.
+    ``agent_name`` names an ``AGENT`` mention.
+    """
+
+    kind: PartKind
+    text: str | None = None
+    tool_name: str | None = None
+    tool_title: str | None = None
+    tool_status: str | None = None
+    tool_input: str | None = None
+    tool_output: str | None = None
+    child_session_id: str | None = None
+    files: tuple[str, ...] = ()
+    filename: str | None = None
+    compaction_auto: bool | None = None
+    agent_name: str | None = None
+
+
+class TranscriptMessage(RecordModel):
+    """One turn in a conversation, with the parts it produced.
+
+    ``error`` holds the name of a failure recorded against the turn, most
+    commonly an aborted message.
+    """
+
+    id: str
+    role: str
+    created: int | None = None
+    agent: str | None = None
+    model: str | None = None
+    provider: str | None = None
+    cost: float | None = None
+    tokens: TokenBreakdown | None = None
+    error: str | None = None
+    parts: tuple[TranscriptPart, ...] = ()
+
+
+class TranscriptTodo(RecordModel):
+    """A todo entry captured for a session."""
+
+    content: str
+    status: str | None = None
+
+
+class Transcript(RecordModel):
+    """A full conversation for one session, with any spawned sub-agent transcripts.
+
+    ``children`` is recursive and holds sub-agent transcripts; it is only
+    populated when they were requested.
+    """
+
+    session: Session
+    messages: tuple[TranscriptMessage, ...] = ()
+    todos: tuple[TranscriptTodo, ...] = ()
+    children: tuple[Transcript, ...] = ()
+
+
+class TranscriptQuery(ValueModel):
+    """A storage-independent query for reading transcripts.
+
+    This deliberately covers only what changes which rows are read; how much
+    of each part is rendered is a presentation concern owned by the Markdown
+    renderer, so no reasoning or tool-body flags belong here.
+    """
+
+    session_ids: tuple[str, ...] = ()
+    include_todos: bool = False
+    include_children: bool = False
