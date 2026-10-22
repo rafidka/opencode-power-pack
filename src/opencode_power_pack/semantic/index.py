@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Self
 
+import numpy as np
+import numpy.typing as npt
 from pydantic import SkipValidation, ValidationError
 
 from ..models import ValueModel
@@ -19,6 +21,9 @@ from .cohere import (
     CohereEmbeddingContract,
     EmbeddingVector,
 )
+
+type FloatMatrix = npt.NDArray[np.float64]
+type FloatVector = npt.NDArray[np.float64]
 
 SCHEMA_VERSION = 2
 _SQLITE_BIND_BATCH_SIZE = 900
@@ -439,26 +444,38 @@ class SemanticIndex:
         statement = "SELECT * FROM chunks" + (
             " WHERE " + " AND ".join(clauses) if clauses else ""
         )
-        hits: list[SearchHit] = []
-        for row in self._require_connection().execute(statement, parameters):
-            chunk, norm = self._chunk_from_row(row)
-            score = (
-                0.0
-                if query_norm == 0.0 or norm == 0.0
-                else sum(
-                    left * right
-                    for left, right in zip(query_values, chunk.embedding, strict=True)
-                )
-                / (query_norm * norm)
-            )
-            hits.append(SearchHit(chunk=chunk, score=score))
-        hits.sort(
-            key=lambda hit: (-hit.score, hit.chunk.session_id, hit.chunk.document_id)
+        rows = self._require_connection().execute(statement, parameters).fetchall()
+        if not rows:
+            return ()
+        matrix = self._embedding_matrix(rows)
+        norms = np.array([float(row["norm"]) for row in rows], dtype=np.float64)
+        denominators = norms * query_norm
+        scores = np.zeros(len(rows), dtype=np.float64)
+        np.divide(
+            matrix @ np.asarray(query_values, dtype=np.float64),
+            denominators,
+            out=scores,
+            where=denominators != 0.0,
+        )
+        order = sorted(
+            range(len(rows)),
+            key=lambda position: (
+                -scores[position],
+                rows[position]["session_id"],
+                rows[position]["document_id"],
+            ),
         )
         grouped: dict[str, list[SearchHit]] = {}
-        for hit in hits:
-            if len(grouped.setdefault(hit.chunk.session_id, [])) < chunks_per_session:
-                grouped[hit.chunk.session_id].append(hit)
+        for position in order:
+            row = rows[position]
+            session_hits = grouped.setdefault(str(row["session_id"]), [])
+            if len(session_hits) < chunks_per_session:
+                session_hits.append(
+                    SearchHit(
+                        chunk=self._chunk(row, matrix[position]),
+                        score=float(scores[position]),
+                    )
+                )
         results = [
             SessionSearchResult(session_id=session_id, hits=tuple(session_hits))
             for session_id, session_hits in grouped.items()
@@ -533,20 +550,27 @@ class SemanticIndex:
             raise SemanticIndexError("embedding vector contains a non-finite value")
         return values, math.sqrt(sum(value * value for value in values))
 
-    def _chunk_from_row(self, row: sqlite3.Row) -> tuple[SemanticChunk, float]:
-        data = bytes(row["embedding"])
-        if len(data) != COHERE_DIMENSION * 4:
+    def _embedding_matrix(self, rows: Sequence[sqlite3.Row]) -> FloatMatrix:
+        data = [bytes(row["embedding"]) for row in rows]
+        if any(len(blob) != COHERE_DIMENSION * 4 for blob in data):
             raise SemanticIndexError("stored embedding has an invalid dimension")
-        embedding = tuple(struct.unpack(f"<{COHERE_DIMENSION}f", data))
+        return (
+            np.frombuffer(b"".join(data), dtype="<f4")
+            .reshape(len(rows), COHERE_DIMENSION)
+            .astype(np.float64)
+        )
+
+    @staticmethod
+    def _chunk(row: sqlite3.Row, embedding: FloatVector) -> SemanticChunk:
         return SemanticChunk(
             document_id=row["document_id"],
             session_id=row["session_id"],
             source=row["source"],
             role=row["role"],
             content=row["content"],
-            embedding=embedding,
+            embedding=tuple(float(value) for value in embedding),
             metadata=row["metadata"],
-        ), float(row["norm"])
+        )
 
     @contextmanager
     def _transaction(self) -> Generator[sqlite3.Connection]:

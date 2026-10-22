@@ -29,6 +29,7 @@ class FakeCohereClient:
     def __init__(self) -> None:
         self.document_calls: list[tuple[str, ...]] = []
         self.query_calls: list[str] = []
+        self.rerank_calls: list[tuple[str, tuple[str, ...]]] = []
         self.fail = False
         self.error: Exception | None = None
         self.fail_after_document_calls: int | None = None
@@ -55,6 +56,25 @@ class FakeCohereClient:
             else [list(self._vector(text)) for text in texts]
         )
         return SimpleNamespace(embeddings=SimpleNamespace(float_=vectors))
+
+    def rerank(self, **kwargs: object) -> object:
+        documents = tuple(kwargs["documents"])
+        self.rerank_calls.append((str(kwargs["query"]), documents))
+        scores = [self._relevance(document) for document in documents]
+        order = sorted(range(len(documents)), key=lambda index: -scores[index])
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(index=index, relevance_score=scores[index])
+                for index in order[: int(kwargs["top_n"])]
+            ]
+        )
+
+    @staticmethod
+    def _relevance(document: str) -> float:
+        """Prefer assistant text, so reranking visibly disagrees with cosine order."""
+        if "assistant" in document:
+            return 0.9
+        return 0.5 if "needle" in document.casefold() else 0.1
 
     @staticmethod
     def _vector(text: str) -> tuple[float, ...]:
@@ -465,6 +485,65 @@ def test_search_filters_groups_snippets_and_zero_limit(
     assert all(match.match_count <= 3 for match in matches)
     assert service.search("needle", limit=0) == ()
     assert provider.query_calls == ["needle"]
+
+
+def test_search_reranks_cosine_candidates_and_scores_sessions_by_best_chunk(
+    opencode_database: Path, tmp_path: Path
+) -> None:
+    provider = FakeProvider()
+    service = SemanticService(opencode_database, provider, tmp_path / "semantic.sqlite")
+
+    cosine = service.search("needle", sources=(SearchSource.TEXT,), rerank=False)
+    reranked = service.search("needle", sources=(SearchSource.TEXT,))
+
+    assert [match.session.id for match in cosine] == ["session-child", "session-root"]
+    assert [match.session.id for match in reranked] == [
+        "session-root",
+        "session-child",
+    ]
+    assert reranked[0].score == 0.9
+    assert reranked[0].snippet == "The assistant also mentions needle."
+    assert reranked[0].match_count == 2
+    assert len(provider.client.rerank_calls) == 1
+    query, documents = provider.client.rerank_calls[0]
+    assert query == "needle"
+    assert len(documents) == len(set(documents)) > 0
+
+
+def test_search_limits_candidates_and_results_with_constants(
+    opencode_database: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from opencode_power_pack.semantic import service as service_module
+
+    monkeypatch.setattr(service_module, "SEMANTIC_RESULT_LIMIT", 1)
+    provider = FakeProvider()
+    service = SemanticService(opencode_database, provider, tmp_path / "semantic.sqlite")
+
+    assert len(service.search("needle")) == 1
+    assert len(service.search("needle", limit=3)) == 3
+    assert all(len(documents) > 2 for _, documents in provider.client.rerank_calls)
+
+    monkeypatch.setattr(service_module, "SEMANTIC_RERANK_CANDIDATES", 2)
+    provider.client.rerank_calls.clear()
+    service.search("needle", limit=3)
+
+    assert [len(documents) for _, documents in provider.client.rerank_calls] == [2]
+
+
+def test_search_without_rerank_makes_no_rerank_call(
+    opencode_database: Path, tmp_path: Path
+) -> None:
+    provider = FakeProvider()
+    service = SemanticService(opencode_database, provider, tmp_path / "semantic.sqlite")
+
+    matches = service.search("needle", rerank=False)
+
+    assert [match.session.id for match in matches] == [
+        "session-child",
+        "session-other",
+        "session-root",
+    ]
+    assert provider.client.rerank_calls == []
 
 
 def test_invalid_sdk_vector_becomes_expected_error(

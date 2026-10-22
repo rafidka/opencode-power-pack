@@ -243,12 +243,22 @@ op2 sessions index --force
 op2 sessions index --rebuild --format json
 ```
 
-Semantic indexing uses Cohere's fixed `embed-v4.0` model with 1024 dimensions.
+Semantic indexing uses Cohere's `embed-v5.0-fast` model with 1024 dimensions.
 Table-format indexing shows interactive progress on a TTY; Cohere failures include
 safe, actionable status guidance without exposing request content or credentials.
+An index built with a different model is rejected; rebuild it with
+`op2 sessions index --rebuild`.
+
+A semantic search pre-ranks indexed chunks by cosine similarity, takes the best
+50 (at most 3 from any one session), and rescores them with Cohere's
+`rerank-v5.0-fast`. Each session is ranked by its best reranked chunk, and its
+score is Rerank's calibrated relevance: roughly the probability that the chunk
+is useful. `--no-rerank` skips the Rerank call and ranks by cosine similarity
+alone. The candidate count, per-session cap, and default result count are
+constants in `semantic/service.py`.
 
 Semantic search supports the usual title/text selection, `--role`, repository,
-session, archive, agent/provider/model, and time filters. It returns 10 results
+session, archive, agent/provider/model, and time filters. It returns 5 results
 by default; use `-n`/`--max-count` to change that. `--case-sensitive` and the
 sensitive `--include-reasoning`, `--include-tool-inputs`, and
 `--include-tool-outputs` flags cannot be used with `--semantic`.
@@ -262,8 +272,9 @@ unless explicitly requested. Broad searches scan selected session content.
 outputs are omitted unless explicitly requested.
 
 For semantic indexing, only session titles and product-visible user/assistant
-text are sent to Cohere. Reasoning, tool inputs, and tool outputs are
-excluded. Credentials are never stored in the semantic sidecar.
+text are sent to Cohere, and reranking sends the query with those same chunks.
+Reasoning, tool inputs, and tool outputs are excluded. Credentials are never
+stored in the semantic sidecar.
 
 OpenCode's database remains read-only for every reading command. The derived
 semantic sidecar is stored
@@ -278,7 +289,8 @@ costs a rescan rather than an error.
 When it changes, per-session `time_updated` revisions compare stable chunk IDs
 and embed only new or modified chunks. Unchanged vectors are retained, while
 removed chunks and sessions are deleted. Initial indexing can make paid API
-calls; later searches against an unchanged source embed only the query.
+calls; later searches against an unchanged source embed only the query and rerank
+its candidates.
 
 ## Development
 

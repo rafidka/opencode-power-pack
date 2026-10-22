@@ -2,7 +2,7 @@
 
 import re
 import sqlite3
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -26,6 +26,7 @@ from .index import (
     SemanticChunk,
     SemanticIndex,
     SemanticIndexError,
+    SessionSearchResult,
     resolve_sidecar_path,
     source_fingerprint,
 )
@@ -37,6 +38,15 @@ _DEFAULT_SOURCES = frozenset({SearchSource.TITLE, SearchSource.TEXT})
 _SUPPORTED_SOURCES = _DEFAULT_SOURCES
 _SNIPPET_WHITESPACE = re.compile(r"\s+")
 _DEFAULT_FILTERS = SessionFilter()
+
+SEMANTIC_RESULT_LIMIT = 5
+"""Sessions a semantic search returns when no count is requested."""
+
+SEMANTIC_RERANK_CANDIDATES = 50
+"""Chunks taken from cosine pre-ranking and rescored by Cohere Rerank."""
+
+SEMANTIC_CHUNKS_PER_SESSION = 3
+"""Most chunks one session contributes, so a long session cannot crowd out others."""
 
 
 class SemanticServiceError(RuntimeCommandError):
@@ -98,7 +108,11 @@ class SemanticSyncResult(ValueModel):
 
 
 class SemanticSearchMatch(RecordModel):
-    """One ranked semantic result, grouped from its best retained chunks."""
+    """One ranked semantic result, grouped from its best retained chunks.
+
+    ``score`` is Cohere Rerank's relevance score, a calibrated probability that
+    the best chunk is useful, or the cosine similarity when reranking is off.
+    """
 
     session: Session
     source: SearchSource
@@ -289,9 +303,17 @@ class SemanticService:
         roles: Iterable[str] = (),
         snippet_length: int = 200,
         limit: int | None = None,
+        rerank: bool = True,
     ) -> tuple[SemanticSearchMatch, ...]:
-        """Synchronize lazily, then search eligible sessions by cosine similarity."""
+        """Synchronize lazily, then rank eligible sessions against ``text``.
+
+        Chunks are pre-ranked by cosine similarity. With ``rerank``, the best
+        ``SEMANTIC_RERANK_CANDIDATES`` of them are rescored by Cohere Rerank and
+        each session is ranked by its best reranked chunk; otherwise sessions
+        keep their cosine order. ``limit`` defaults to ``SEMANTIC_RESULT_LIMIT``.
+        """
         self.sync()
+        limit = SEMANTIC_RESULT_LIMIT if limit is None else limit
         if limit == 0:
             return ()
         selected_sources = frozenset(sources)
@@ -311,20 +333,28 @@ class SemanticService:
                     session_ids=sessions_by_id,
                     sources=(source.value for source in selected_sources),
                     roles=(*selected_roles, None) if selected_roles else None,
-                    chunks_per_session=3,
-                    limit_sessions=limit,
+                    chunks_per_session=SEMANTIC_CHUNKS_PER_SESSION,
+                    limit_sessions=None if rerank else limit,
                 )
+            ranked = (
+                self._reranked(text, results)
+                if rerank
+                else [
+                    (result.score, [hit.chunk for hit in result.hits])
+                    for result in results
+                ]
+            )
             return tuple(
                 SemanticSearchMatch(
-                    session=sessions_by_id[result.session_id],
-                    source=SearchSource(result.hits[0].chunk.source),
-                    role=result.hits[0].chunk.role,
-                    snippet=_snippet(result.hits[0].chunk.content, snippet_length),
-                    score=result.score,
-                    match_count=len(result.hits),
+                    session=sessions_by_id[chunks[0].session_id],
+                    source=SearchSource(chunks[0].source),
+                    role=chunks[0].role,
+                    snippet=_snippet(chunks[0].content, snippet_length),
+                    score=score,
+                    match_count=len(chunks),
                 )
-                for result in results
-                if result.session_id in sessions_by_id
+                for score, chunks in ranked[:limit]
+                if chunks[0].session_id in sessions_by_id
             )
         except SemanticServiceError:
             raise
@@ -336,6 +366,25 @@ class SemanticService:
             SemanticIndexError,
         ) as error:
             raise SemanticServiceError(f"semantic search failed: {error}") from error
+
+    def _reranked(
+        self, text: str, results: Sequence[SessionSearchResult]
+    ) -> list[tuple[float, list[SemanticChunk]]]:
+        """Rerank the best cosine candidates and group them by session.
+
+        Each session is scored by its best reranked chunk, and its chunks are
+        listed best first.
+        """
+        candidates = sorted(
+            (hit for result in results for hit in result.hits),
+            key=lambda hit: -hit.score,
+        )[:SEMANTIC_RERANK_CANDIDATES]
+        scores = self._embedder.rerank(text, [hit.chunk.content for hit in candidates])
+        grouped: dict[str, tuple[float, list[SemanticChunk]]] = {}
+        for item in scores:
+            chunk = candidates[item.index].chunk
+            grouped.setdefault(chunk.session_id, (item.score, []))[1].append(chunk)
+        return list(grouped.values())
 
 
 def _serialize_revision(value: int | None) -> str:

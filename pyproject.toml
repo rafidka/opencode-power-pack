@@ -10,6 +10,7 @@ requires-python = ">=3.14"
 dependencies = [
     "cohere>=5.20.0",
     "httpx>=0.28.0",
+    "numpy>=2.5.4",
     "pydantic>=2.13.0",
     "rich>=14.0.0",
     "typer>=0.21.0",

@@ -3,10 +3,12 @@
 from .cohere import (
     COHERE_DIMENSION,
     COHERE_MODEL,
+    COHERE_RERANK_MODEL,
     CohereEmbeddingContract,
     CohereEmbedProvider,
     EmbeddingBatch,
     EmbeddingVector,
+    RerankScore,
 )
 from .documents import (
     DOCUMENT_CHUNK_CHAR_LIMIT,
@@ -31,6 +33,9 @@ from .index import (
     source_fingerprint,
 )
 from .service import (
+    SEMANTIC_CHUNKS_PER_SESSION,
+    SEMANTIC_RERANK_CANDIDATES,
+    SEMANTIC_RESULT_LIMIT,
     SemanticEmbeddingBatchCompleted,
     SemanticSearchMatch,
     SemanticService,
@@ -46,14 +51,19 @@ from .service import (
 __all__ = [
     "COHERE_DIMENSION",
     "COHERE_MODEL",
+    "COHERE_RERANK_MODEL",
     "DOCUMENT_CHUNK_CHAR_LIMIT",
     "DOCUMENT_CHUNK_OVERLAP_CHARS",
+    "SEMANTIC_CHUNKS_PER_SESSION",
+    "SEMANTIC_RERANK_CANDIDATES",
+    "SEMANTIC_RESULT_LIMIT",
     "CohereEmbedProvider",
     "CohereEmbeddingContract",
     "EmbeddingBatch",
     "EmbeddingVector",
     "FileFingerprint",
     "IndexStatus",
+    "RerankScore",
     "SearchHit",
     "SemanticChunk",
     "SemanticDocument",

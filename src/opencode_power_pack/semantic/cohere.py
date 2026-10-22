@@ -1,4 +1,4 @@
-"""Cohere Embed API v2 integration."""
+"""Cohere Embed and Rerank API v2 integration."""
 
 import json
 import math
@@ -15,9 +15,10 @@ from pydantic import ValidationError
 from ..errors import EmbeddingError
 from ..models import ValueModel
 
-COHERE_MODEL = "embed-v4.0"
+COHERE_MODEL = "embed-v5.0-fast"
 COHERE_DIMENSION = 1024
 COHERE_MAX_TEXTS_PER_REQUEST = 96
+COHERE_RERANK_MODEL = "rerank-v5.0-fast"
 
 _MAX_PROVIDER_MESSAGE_LENGTH = 240
 _SENSITIVE_VALUE = re.compile(
@@ -31,6 +32,13 @@ _UNSAFE_PROVIDER_MESSAGE = re.compile(
 
 type EmbeddingVector = tuple[float, ...]
 type EmbeddingBatch = tuple[EmbeddingVector, ...]
+
+
+class RerankScore(ValueModel):
+    """The relevance of one reranked document, identified by its input position."""
+
+    index: int
+    score: float
 
 
 class CohereDocumentBatchCompleted(ValueModel):
@@ -72,9 +80,13 @@ class _CohereClient(Protocol):
         truncate: str,
     ) -> object: ...
 
+    def rerank(
+        self, *, model: str, query: str, documents: Sequence[str], top_n: int
+    ) -> object: ...
+
 
 class CohereEmbedProvider:
-    """Embed documents and queries with Cohere's v2 Embed API."""
+    """Embed and rerank with Cohere's v2 Embed and Rerank APIs."""
 
     contract = CohereEmbeddingContract()
 
@@ -122,35 +134,61 @@ class CohereEmbedProvider:
             raise EmbeddingError("embedding query must be a string")
         return self._embed((text,), input_type="search_query")[0]
 
+    def rerank(self, query: str, documents: Sequence[str]) -> tuple[RerankScore, ...]:
+        """Score every document against ``query``, most relevant first."""
+        if type(query) is not str:
+            raise EmbeddingError("rerank query must be a string")
+        texts = self._validate_texts(documents, "rerank documents")
+        if not texts:
+            return ()
+        response = self._call(
+            "rerank",
+            lambda: self._client.rerank(
+                model=COHERE_RERANK_MODEL,
+                query=query,
+                documents=texts,
+                top_n=len(texts),
+            ),
+        )
+        return self._parse_rerank(response, len(texts))
+
     def _embed(self, texts: Sequence[str], *, input_type: str) -> EmbeddingBatch:
-        try:
-            response = self._client.embed(
+        response = self._call(
+            "embedding",
+            lambda: self._client.embed(
                 model=COHERE_MODEL,
                 input_type=input_type,
                 texts=texts,
                 output_dimension=COHERE_DIMENSION,
                 embedding_types=("float",),
                 truncate="END",
-            )
+            ),
+        )
+        return self._parse_vectors(response, len(texts))
+
+    @classmethod
+    def _call(cls, operation: str, request: Callable[[], object]) -> object:
+        """Run one Cohere request, turning expected failures into safe errors."""
+        try:
+            return request()
         except ApiError as error:
-            raise EmbeddingError(self._api_error_message(error)) from error
+            raise EmbeddingError(cls._api_error_message(error, operation)) from error
         except httpx.TimeoutException as error:
             raise EmbeddingError(
-                "Cohere embedding request timed out; retry later"
+                f"Cohere {operation} request timed out; retry later"
             ) from error
         except httpx.RequestError as error:
             raise EmbeddingError(
-                "Cohere embedding network request failed; "
+                f"Cohere {operation} network request failed; "
                 "check your connection and retry"
             ) from error
         except (ParsingError, json.JSONDecodeError, ValidationError) as error:
             raise EmbeddingError(
-                "Cohere embedding API returned an unreadable response"
+                f"Cohere {operation} API returned an unreadable response"
             ) from error
-        return self._parse_vectors(response, len(texts))
 
     @staticmethod
-    def _api_error_message(error: ApiError) -> str:
+    def _api_error_message(error: ApiError, operation: str = "embedding") -> str:
         status = error.status_code if type(error.status_code) is int else None
         status_text = str(status) if status is not None else "status unavailable"
         if status == 401:
@@ -168,14 +206,17 @@ class CohereEmbedProvider:
         if status == 400:
             message = CohereEmbedProvider._provider_message(error.body)
             suffix = f": {message}" if message is not None else ""
-            return f"Cohere embedding request was invalid (HTTP {status_text}){suffix}"
+            return (
+                f"Cohere {operation} request was invalid (HTTP {status_text}){suffix}"
+            )
         if status == 422:
-            return f"Cohere embedding request failed validation (HTTP {status_text})"
+            return f"Cohere {operation} request failed validation (HTTP {status_text})"
         if status is not None and 500 <= status <= 599:
-            return f"Cohere embedding service error (HTTP {status_text}): retry later"
+            return f"Cohere {operation} service error (HTTP {status_text}): retry later"
         message = CohereEmbedProvider._provider_message(error.body)
         suffix = f": {message}" if message is not None else ""
-        return f"unable to obtain Cohere embeddings (HTTP {status_text}){suffix}"
+        result = "embeddings" if operation == "embedding" else f"{operation} results"
+        return f"unable to obtain Cohere {result} (HTTP {status_text}){suffix}"
 
     @staticmethod
     def _provider_message(body: object) -> str | None:
@@ -236,6 +277,34 @@ class CohereEmbedProvider:
                 vector.append(number)
             vectors.append(tuple(vector))
         return tuple(vectors)
+
+    @staticmethod
+    def _parse_rerank(response: object, expected_count: int) -> tuple[RerankScore, ...]:
+        results = getattr(response, "results", None)
+        if not isinstance(results, list):
+            raise EmbeddingError(
+                "Cohere rerank API returned an unexpected result count"
+            )
+        scores: list[RerankScore] = []
+        for result in cast(list[object], results):
+            index = getattr(result, "index", None)
+            score = getattr(result, "relevance_score", None)
+            if (
+                type(index) is not int
+                or not 0 <= index < expected_count
+                or isinstance(score, bool)
+                or not isinstance(score, int | float)
+                or not math.isfinite(score)
+            ):
+                raise EmbeddingError("Cohere rerank API returned an invalid result")
+            scores.append(RerankScore(index=index, score=float(score)))
+        if len(scores) != expected_count or len({s.index for s in scores}) != len(
+            scores
+        ):
+            raise EmbeddingError(
+                "Cohere rerank API returned an unexpected result count"
+            )
+        return tuple(sorted(scores, key=lambda item: (-item.score, item.index)))
 
     @staticmethod
     def _validate_texts(texts: Sequence[str], label: str) -> tuple[str, ...]:

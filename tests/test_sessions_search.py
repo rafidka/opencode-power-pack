@@ -347,7 +347,8 @@ def test_semantic_search_wires_defaults_filters_and_roles(
     assert result.exit_code == 0
     assert semantic_api["provider_created"] is True
     options = semantic_api["search_options"]
-    assert options["limit"] == 10
+    assert options["limit"] is None
+    assert options["rerank"] is True
     assert options["sources"] == frozenset({SearchSource.TITLE})
     assert options["roles"] == frozenset({"user"})
     filters = options["filters"]
@@ -379,6 +380,20 @@ def test_semantic_search_uses_default_sidecar_and_explicit_limit(
     assert result.exit_code == 0
     assert semantic_api["index"] is None
     assert semantic_api["search_options"]["limit"] == 0
+
+
+def test_no_rerank_is_passed_through_and_requires_semantic(
+    semantic_api: dict[str, object],
+) -> None:
+    result = runner.invoke(
+        cli.app, ["sessions", "search", "meaning", "--semantic", "--no-rerank"]
+    )
+    assert result.exit_code == 0, result.output
+    assert semantic_api["search_options"]["rerank"] is False
+
+    literal = runner.invoke(cli.app, ["sessions", "search", "meaning", "--no-rerank"])
+    assert literal.exit_code == 2
+    assert "--no-rerank requires --semantic" in literal.output
 
 
 def test_semantic_json_output(semantic_api: dict[str, object]) -> None:

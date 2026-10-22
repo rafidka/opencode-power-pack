@@ -147,6 +147,13 @@ def _search(
             ),
         ),
     ] = False,
+    no_rerank: Annotated[
+        bool,
+        typer.Option(
+            "--no-rerank",
+            help="With --semantic, rank by embedding similarity alone.",
+        ),
+    ] = False,
     snippet_length: Annotated[
         int, typer.Option("--snippet-length", min=1, help="Maximum snippet length.")
     ] = 200,
@@ -159,6 +166,10 @@ def _search(
     if include_archived and archived_only:
         raise typer.BadParameter(
             "--include-archived cannot be used with --archived-only"
+        )
+    if no_rerank and not semantic:
+        raise typer.BadParameter(
+            "--no-rerank requires --semantic", param_hint="--no-rerank"
         )
     if semantic:
         unsupported_options = (
@@ -235,7 +246,8 @@ def _search(
                 sources=frozenset(selected_sources),
                 roles=selected_roles,
                 snippet_length=snippet_length,
-                limit=10 if max_count is None else max_count,
+                limit=max_count,
+                rerank=not no_rerank,
             )
         else:
             search_query = SearchSessionsQuery(

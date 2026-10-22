@@ -12,6 +12,7 @@ from opencode_power_pack.errors import EmbeddingError
 from opencode_power_pack.semantic import (
     COHERE_DIMENSION,
     COHERE_MODEL,
+    COHERE_RERANK_MODEL,
     CohereEmbeddingContract,
     CohereEmbedProvider,
 )
@@ -269,3 +270,77 @@ def test_programmer_errors_are_not_recast_as_sdk_failures() -> None:
 
     with pytest.raises(RuntimeError, match="bug"):
         provider.embed_documents(["one"])
+
+
+class FakeRerankClient(FakeCohereClient):
+    def rerank(self, **kwargs: object) -> object:
+        self.requests.append(kwargs)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def rerank_response(*results: tuple[object, object]) -> object:
+    return SimpleNamespace(
+        results=[
+            SimpleNamespace(index=index, relevance_score=score)
+            for index, score in results
+        ]
+    )
+
+
+def test_rerank_scores_every_document_with_the_rerank_model() -> None:
+    client = FakeRerankClient([rerank_response((1, 0.9), (0, 0.2), (2, 0.2))])
+    provider = CohereEmbedProvider(client=client)
+
+    scores = provider.rerank("query", ["a", "b", "c"])
+
+    assert [(score.index, score.score) for score in scores] == [
+        (1, 0.9),
+        (0, 0.2),
+        (2, 0.2),
+    ]
+    assert client.requests == [
+        {
+            "model": COHERE_RERANK_MODEL,
+            "query": "query",
+            "documents": ("a", "b", "c"),
+            "top_n": 3,
+        }
+    ]
+
+
+def test_rerank_without_documents_makes_no_request() -> None:
+    client = FakeRerankClient([])
+    assert CohereEmbedProvider(client=client).rerank("query", []) == ()
+    assert client.requests == []
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        SimpleNamespace(results=None),
+        rerank_response((0, 0.5)),
+        rerank_response((0, 0.5), (0, 0.4)),
+        rerank_response((0, 0.5), (5, 0.4)),
+        rerank_response((0, 0.5), (1, float("nan"))),
+        rerank_response((0, 0.5), (1, True)),
+    ],
+)
+def test_rerank_rejects_malformed_responses(malformed: object) -> None:
+    provider = CohereEmbedProvider(client=FakeRerankClient([malformed]))
+    with pytest.raises(EmbeddingError, match="Cohere rerank API returned"):
+        provider.rerank("query", ["a", "b"])
+
+
+def test_rerank_api_errors_name_the_rerank_operation() -> None:
+    client = FakeRerankClient(
+        [ApiError(status_code=503, body={}), ApiError(status_code=418, body={})]
+    )
+    provider = CohereEmbedProvider(client=client)
+
+    with pytest.raises(EmbeddingError, match="Cohere rerank service error"):
+        provider.rerank("query", ["a"])
+    with pytest.raises(EmbeddingError, match="unable to obtain Cohere rerank results"):
+        provider.rerank("query", ["a"])
