@@ -1,6 +1,5 @@
 """Tests for the sessions show command."""
 
-import json
 import re
 import sqlite3
 import xml.etree.ElementTree as ET
@@ -9,6 +8,16 @@ from typing import cast
 
 import pytest
 import typer
+from opencode_v2 import (
+    assistant,
+    create_database,
+    insert_message,
+    insert_project,
+    insert_session,
+    text,
+    tool,
+    user,
+)
 from typer.testing import CliRunner, Result
 
 from opencode_power_pack.cli import app
@@ -29,52 +38,17 @@ def _bodies(output: str, tag: str) -> list[str]:
     return [body for name, body in _BODY_RE.findall(output) if name == tag]
 
 
-def _create_minimal_schema(connection: sqlite3.Connection) -> None:
-    """Create the smallest schema the command's database layer tolerates."""
-    connection.executescript(
-        """
-        CREATE TABLE project (id TEXT, worktree TEXT, name TEXT);
-        CREATE TABLE project_directory (project_id TEXT, directory TEXT);
-        CREATE TABLE session (
-            id TEXT, project_id TEXT, parent_id TEXT, title TEXT, directory TEXT,
-            cost REAL, agent TEXT, model TEXT, time_created INTEGER,
-            time_updated INTEGER, time_archived INTEGER, tokens_input INTEGER,
-            tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER,
-            tokens_cache_write INTEGER
-        );
-        CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);
-        CREATE TABLE part (message_id TEXT, session_id TEXT, data TEXT);
-        CREATE TABLE todo (session_id TEXT, content TEXT);
-        """
-    )
-    connection.execute("INSERT INTO project VALUES ('project-x', '/work/x', 'x')")
+def _create_database(path: Path) -> sqlite3.Connection:
+    connection = create_database(path)
+    insert_project(connection, "project-x", "/work/x", "x")
+    return connection
 
 
 def _insert_session(
     connection: sqlite3.Connection, session_id: str, title: str
 ) -> None:
-    connection.execute(
-        "INSERT INTO session VALUES "
-        "(?, 'project-x', NULL, ?, '/work/x', 0, 'build', 'gpt', 1, 1, NULL, "
-        "0, 0, 0, 0, 0)",
-        (session_id, title),
-    )
-
-
-def _insert_message_and_part(
-    connection: sqlite3.Connection,
-    message_id: str,
-    session_id: str,
-    role: str,
-    part_data: dict[str, object],
-) -> None:
-    connection.execute(
-        "INSERT INTO message VALUES (?, ?, ?)",
-        (message_id, session_id, json.dumps({"role": role})),
-    )
-    connection.execute(
-        "INSERT INTO part VALUES (?, ?, ?)",
-        (message_id, session_id, json.dumps(part_data)),
+    insert_session(
+        connection, session_id, project_id="project-x", title=title, directory="/work/x"
     )
 
 
@@ -138,8 +112,7 @@ def test_verbatim_fidelity_of_markdown_shaped_content(tmp_path: Path) -> None:
     `opencode_database` fixture has no such content, so this builds its own.
     """
     database = tmp_path / "opencode.db"
-    connection = sqlite3.connect(database)
-    _create_minimal_schema(connection)
+    connection = _create_database(database)
     _insert_session(connection, "session-md", "Markdown body")
     body = (
         "## Heading in the conversation\n"
@@ -153,9 +126,7 @@ def test_verbatim_fidelity_of_markdown_shaped_content(tmp_path: Path) -> None:
         "    return 1\n"
         "```"
     )
-    _insert_message_and_part(
-        connection, "message-md", "session-md", "user", {"type": "text", "text": body}
-    )
+    insert_message(connection, "session-md", "message-md", "user", user(body))
     connection.commit()
     connection.close()
 
@@ -241,30 +212,22 @@ def test_include_children_nests_child_session_in_the_spawning_tool(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "opencode.db"
-    connection = sqlite3.connect(database)
-    _create_minimal_schema(connection)
+    connection = _create_database(database)
     _insert_session(connection, "session-parent", "Parent")
     _insert_session(connection, "session-sub", "Sub-agent")
-    _insert_message_and_part(
+    insert_message(
         connection,
-        "message-parent",
         "session-parent",
+        "message-parent",
         "assistant",
-        {
-            "type": "tool",
-            "tool": "task",
-            "state": {
-                "status": "completed",
-                "metadata": {"sessionId": "session-sub"},
-            },
-        },
+        assistant(tool("task", metadata={"sessionId": "session-sub"})),
     )
-    _insert_message_and_part(
+    insert_message(
         connection,
-        "message-sub",
         "session-sub",
+        "message-sub",
         "assistant",
-        {"type": "text", "text": "Sub-agent reply needle"},
+        assistant(text("Sub-agent reply needle")),
     )
     connection.commit()
     connection.close()

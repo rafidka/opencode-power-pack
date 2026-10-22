@@ -84,17 +84,11 @@ class SearchSource(StrEnum):
 
 
 class PartKind(StrEnum):
-    """The part kinds that carry conversation content.
-
-    OpenCode's ``step-start`` and ``step-finish`` bookkeeping parts are
-    deliberately absent because their token and cost data is already carried
-    on the message.
-    """
+    """The part kinds that carry conversation content."""
 
     TEXT = "text"
     REASONING = "reasoning"
     TOOL = "tool"
-    PATCH = "patch"
     FILE = "file"
     COMPACTION = "compaction"
     AGENT = "agent"
@@ -237,11 +231,10 @@ class TranscriptPart(RecordModel):
     flat record keeps the renderer a simple dispatch. ``text`` carries the
     body of ``TEXT`` and ``REASONING``. The ``tool_*`` fields describe a
     ``TOOL`` call, where ``tool_input`` and ``tool_output`` are
-    already-serialized text. ``child_session_id`` is set for a ``task`` tool
-    call that spawned a sub-agent session. ``files`` lists the paths a
-    ``PATCH`` touched. ``filename`` names a ``FILE`` attachment.
-    ``compaction_auto`` records whether a ``COMPACTION`` was automatic.
-    ``agent_name`` names an ``AGENT`` mention.
+    already-serialized text. ``child_session_id`` is set for a ``subagent``
+    tool call that spawned a sub-agent session. ``filename`` names a ``FILE``
+    attachment. ``compaction_auto`` records whether a ``COMPACTION`` was
+    automatic. ``agent_name`` names an ``AGENT`` mention.
     """
 
     kind: PartKind
@@ -252,7 +245,6 @@ class TranscriptPart(RecordModel):
     tool_input: str | None = None
     tool_output: str | None = None
     child_session_id: str | None = None
-    files: tuple[str, ...] = ()
     filename: str | None = None
     compaction_auto: bool | None = None
     agent_name: str | None = None
@@ -261,8 +253,9 @@ class TranscriptPart(RecordModel):
 class TranscriptMessage(RecordModel):
     """One turn in a conversation, with the parts it produced.
 
-    ``error`` holds the name of a failure recorded against the turn, most
-    commonly an aborted message.
+    ``role`` is ``user``, ``assistant``, or ``compaction`` for the point where
+    OpenCode summarized earlier context. ``error`` holds the kind of failure
+    recorded against the turn, most commonly ``aborted``.
     """
 
     id: str

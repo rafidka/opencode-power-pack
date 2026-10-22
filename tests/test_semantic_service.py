@@ -1,9 +1,11 @@
+import json
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from cohere.core.api_error import ApiError
+from opencode_v2 import insert_message, insert_session, user
 
 from opencode_power_pack.errors import EmbeddingError
 from opencode_power_pack.models import SearchSource, SessionFilter
@@ -137,7 +139,7 @@ def test_sync_progress_reports_metadata_and_deletion_only_work(
     service.sync()
     connection = sqlite3.connect(opencode_database)
     connection.execute(
-        "UPDATE session SET agent = ?, time_updated = ? WHERE id = ?",
+        "UPDATE session_v2 SET agent = ?, time_updated = ? WHERE id = ?",
         ("review", 7_000, "session-root"),
     )
     connection.commit()
@@ -157,7 +159,7 @@ def test_sync_progress_reports_metadata_and_deletion_only_work(
     ]
 
     connection = sqlite3.connect(opencode_database)
-    connection.execute("DELETE FROM session WHERE id = ?", ("session-other",))
+    connection.execute("DELETE FROM session_v2 WHERE id = ?", ("session-other",))
     connection.commit()
     connection.close()
     deletion_events: list[object] = []
@@ -184,26 +186,16 @@ def test_sync_progress_stops_before_commits_when_provider_batch_fails(
     provider.client.document_calls.clear()
     connection = sqlite3.connect(opencode_database)
     for number in range(3):
-        message_id = f"message-progress-{number}"
-        connection.execute(
-            "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
-            (message_id, "session-root", "user", 7_000, '{"role":"user"}'),
-        )
-        connection.execute(
-            "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                f"part-progress-{number}",
-                "session-root",
-                message_id,
-                "text",
-                f"Progress needle {number}",
-                f'{{"type":"text","text":"Progress needle {number}"}}',
-                7_000,
-                7_000,
-            ),
+        insert_message(
+            connection,
+            "session-root",
+            f"message-progress-{number}",
+            "user",
+            user(f"Progress needle {number}"),
+            created=7_000,
         )
     connection.execute(
-        "UPDATE session SET time_updated = ? WHERE id = ?", (7_000, "session-root")
+        "UPDATE session_v2 SET time_updated = ? WHERE id = ?", (7_000, "session-root")
     )
     connection.commit()
     connection.close()
@@ -231,7 +223,7 @@ def test_sync_progress_callback_error_stops_before_index_mutation(
         previous_fingerprint = index.stored_fingerprint()
     connection = sqlite3.connect(opencode_database)
     connection.execute(
-        "UPDATE session SET agent = ?, time_updated = ? WHERE id = ?",
+        "UPDATE session_v2 SET agent = ?, time_updated = ? WHERE id = ?",
         ("review", 7_000, "session-root"),
     )
     connection.commit()
@@ -280,12 +272,15 @@ def test_sync_is_incremental_removes_sessions_and_rebuilds(
 
     connection = sqlite3.connect(opencode_database)
     connection.execute(
-        "UPDATE session SET title = ?, time_updated = ? WHERE id = ?",
+        "UPDATE session_v2 SET title = ?, time_updated = ? WHERE id = ?",
         ("updated needle", 7_000, "session-root"),
     )
-    connection.execute(
-        "INSERT INTO session (id, title, time_updated) VALUES (?, ?, ?)",
-        ("session-new", "new needle", 8_000),
+    insert_session(
+        connection,
+        "session-new",
+        project_id="project-root",
+        title="new needle",
+        updated=8_000,
     )
     connection.commit()
     connection.close()
@@ -296,7 +291,7 @@ def test_sync_is_incremental_removes_sessions_and_rebuilds(
     assert "Other widget needle" not in provider.document_calls[-1]
 
     connection = sqlite3.connect(opencode_database)
-    connection.execute("DELETE FROM session WHERE id = ?", ("session-other",))
+    connection.execute("DELETE FROM session_v2 WHERE id = ?", ("session-other",))
     connection.commit()
     connection.close()
 
@@ -317,25 +312,16 @@ def test_changed_session_embeds_only_new_chunks(
     provider.document_calls.clear()
 
     connection = sqlite3.connect(opencode_database)
-    connection.execute(
-        "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
-        ("message-new", "session-root", "user", 7_000, '{"role":"user"}'),
+    insert_message(
+        connection,
+        "session-root",
+        "message-new",
+        "user",
+        user("A newly appended needle."),
+        created=7_000,
     )
     connection.execute(
-        "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            "part-new",
-            "session-root",
-            "message-new",
-            "text",
-            "A newly appended needle.",
-            '{"type":"text","text":"A newly appended needle."}',
-            7_000,
-            7_000,
-        ),
-    )
-    connection.execute(
-        "UPDATE session SET time_updated = ? WHERE id = ?", (7_000, "session-root")
+        "UPDATE session_v2 SET time_updated = ? WHERE id = ?", (7_000, "session-root")
     )
     connection.commit()
     connection.close()
@@ -359,15 +345,11 @@ def test_changed_text_replaces_stale_chunk_without_reembedding_history(
     replacement = "Replacement message text."
     connection = sqlite3.connect(opencode_database)
     connection.execute(
-        "UPDATE part SET text = ?, data = ? WHERE id = ?",
-        (
-            replacement,
-            '{"type":"text","text":"Replacement message text."}',
-            "part-user",
-        ),
+        "UPDATE session_message SET data = ? WHERE id = ?",
+        (json.dumps(user(replacement)), "message-user"),
     )
     connection.execute(
-        "UPDATE session SET time_updated = ? WHERE id = ?", (7_000, "session-root")
+        "UPDATE session_v2 SET time_updated = ? WHERE id = ?", (7_000, "session-root")
     )
     connection.commit()
     connection.close()
@@ -393,9 +375,9 @@ def test_text_deletion_and_metadata_update_do_not_embed_documents(
     provider.document_calls.clear()
 
     connection = sqlite3.connect(opencode_database)
-    connection.execute("DELETE FROM part WHERE id = ?", ("part-user",))
+    connection.execute("DELETE FROM session_message WHERE id = ?", ("message-user",))
     connection.execute(
-        "UPDATE session SET time_updated = ? WHERE id = ?", (7_000, "session-root")
+        "UPDATE session_v2 SET time_updated = ? WHERE id = ?", (7_000, "session-root")
     )
     connection.commit()
     connection.close()
@@ -409,7 +391,7 @@ def test_text_deletion_and_metadata_update_do_not_embed_documents(
 
     connection = sqlite3.connect(opencode_database)
     connection.execute(
-        "UPDATE session SET agent = ?, time_updated = ? WHERE id = ?",
+        "UPDATE session_v2 SET agent = ?, time_updated = ? WHERE id = ?",
         ("review", 8_000, "session-root"),
     )
     connection.commit()
@@ -434,25 +416,16 @@ def test_failed_new_embedding_preserves_chunks_and_revision_for_retry(
     provider.document_calls.clear()
 
     connection = sqlite3.connect(opencode_database)
-    connection.execute(
-        "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
-        ("message-retry", "session-root", "user", 7_000, '{"role":"user"}'),
+    insert_message(
+        connection,
+        "session-root",
+        "message-retry",
+        "user",
+        user("Retry needle."),
+        created=7_000,
     )
     connection.execute(
-        "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            "part-retry",
-            "session-root",
-            "message-retry",
-            "text",
-            "Retry needle.",
-            '{"type":"text","text":"Retry needle."}',
-            7_000,
-            7_000,
-        ),
-    )
-    connection.execute(
-        "UPDATE session SET time_updated = ? WHERE id = ?", (7_000, "session-root")
+        "UPDATE session_v2 SET time_updated = ? WHERE id = ?", (7_000, "session-root")
     )
     connection.commit()
     connection.close()

@@ -1,8 +1,16 @@
-import json
 import sqlite3
 from pathlib import Path
 
 import pytest
+from opencode_v2 import (
+    assistant,
+    create_database,
+    insert_message,
+    insert_project,
+    insert_session,
+    text,
+    user,
+)
 
 from opencode_power_pack.database import OpenCodeDatabase, resolve_database_path
 from opencode_power_pack.database.client import _SQLITE_SESSION_ID_BIND_BATCH_SIZE
@@ -17,33 +25,20 @@ from opencode_power_pack.models import (
 
 
 def _database(path: Path) -> None:
-    connection = sqlite3.connect(path)
-    connection.executescript("""
-        CREATE TABLE project (id TEXT, worktree TEXT, name TEXT);
-        CREATE TABLE project_directory (project_id TEXT, directory TEXT);
-        CREATE TABLE session (
-            id TEXT, project_id TEXT, parent_id TEXT, title TEXT, directory TEXT,
-            cost REAL, agent TEXT, model TEXT, time_created INTEGER,
-            time_updated INTEGER, time_archived INTEGER, tokens_input INTEGER,
-            tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER,
-            tokens_cache_write INTEGER
-        );
-        CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);
-        CREATE TABLE part (message_id TEXT, session_id TEXT, data TEXT);
-        CREATE TABLE todo (session_id TEXT, content TEXT);
-    """)
-    connection.execute("INSERT INTO project VALUES ('p', '/work/repo', 'repo')")
-    connection.execute(
-        "INSERT INTO session VALUES (?, 'p', NULL, ?, '/work/repo', 1, "
-        "'agent', ?, 1, ?, NULL, 1, 2, 3, 4, 5)",
-        ("s", "Straße title", json.dumps({"providerID": "openai", "id": "gpt"}), 2),
+    connection = create_database(path)
+    insert_project(connection)
+    insert_session(
+        connection,
+        "s",
+        title="Straße title",
+        cost=1,
+        updated=2,
+        agent="agent",
+        tokens=(1, 2, 3, 4, 5),
     )
-    connection.execute(
-        "INSERT INTO message VALUES ('m', 's', ?)", (json.dumps({"role": "user"}),)
-    )
-    connection.execute(
-        "INSERT INTO part VALUES ('m', 's', ?)",
-        (json.dumps({"type": "text", "text": "a 100%_ literal Straße"}),),
+    insert_message(connection, "s", "m", "user", user("a 100%_ literal Straße"))
+    insert_message(
+        connection, "s", "a", "assistant", assistant(text("first"), text("second"))
     )
     connection.commit()
     connection.close()
@@ -68,10 +63,12 @@ def test_database_path_read_only_listing_and_literal_unicode_search(
         )
         assert database._connection is not None
         with pytest.raises(sqlite3.OperationalError):
-            database._connection.execute("DELETE FROM session")
+            database._connection.execute("DELETE FROM session_v2")
 
 
-def test_semantic_extraction_uses_rowid_when_part_has_no_id(tmp_path: Path) -> None:
+def test_semantic_record_ids_identify_messages_and_assistant_blocks(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "opencode.db"
     _database(path)
 
@@ -83,7 +80,9 @@ def test_semantic_extraction_uses_rowid_when_part_has_no_id(tmp_path: Path) -> N
     ]
     assert extracted == [
         ("title", "Straße title"),
-        ("1", "a 100%_ literal Straße"),
+        ("m", "a 100%_ literal Straße"),
+        ("a:0", "first"),
+        ("a:1", "second"),
     ]
 
 
@@ -96,10 +95,8 @@ def test_semantic_fetch_splits_selected_ids_at_sqlite_bind_batch_limit(
         f"bulk-{index:04}" for index in range(_SQLITE_SESSION_ID_BIND_BATCH_SIZE + 1)
     )
     connection = sqlite3.connect(path)
-    connection.executemany(
-        "INSERT INTO session (id) VALUES (?)",
-        ((session_id,) for session_id in session_ids),
-    )
+    for session_id in session_ids:
+        insert_session(connection, session_id)
     connection.commit()
     connection.close()
 
@@ -112,7 +109,7 @@ def test_semantic_fetch_splits_selected_ids_at_sqlite_bind_batch_limit(
     session_queries = [
         statement
         for statement in statements
-        if statement.startswith("SELECT id, title, time_updated FROM session")
+        if statement.startswith("SELECT id, title, time_updated FROM session_v2")
     ]
     assert len(batches) == _SQLITE_SESSION_ID_BIND_BATCH_SIZE + 1
     assert len(session_queries) == 2
@@ -123,6 +120,24 @@ def test_incompatible_schema_is_a_friendly_error(tmp_path: Path) -> None:
     sqlite3.connect(path).close()
 
     with pytest.raises(DatabaseError, match="incompatible OpenCode database schema"):
+        OpenCodeDatabase(path).list_repositories()
+
+
+def test_v1_database_is_rejected_with_a_migration_hint(tmp_path: Path) -> None:
+    path = tmp_path / "v1.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE project (id TEXT, worktree TEXT, name TEXT);
+        CREATE TABLE project_directory (project_id TEXT, directory TEXT);
+        CREATE TABLE session (id TEXT);
+        CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);
+        CREATE TABLE part (message_id TEXT, session_id TEXT, data TEXT);
+        """
+    )
+    connection.close()
+
+    with pytest.raises(DatabaseError, match="OpenCode V1 database"):
         OpenCodeDatabase(path).list_repositories()
 
 
@@ -159,13 +174,15 @@ def test_list_and_search_id_tiebreaking_follows_their_contracts(
     opencode_database: Path,
 ) -> None:
     connection = sqlite3.connect(opencode_database)
-    connection.executemany(
-        "INSERT INTO session "
-        "(id, project_id, parent_id, title, directory, time_created, time_updated) "
-        "VALUES (?, 'project-root', NULL, 'needle tie', "
-        "'/workspace/acme/widget', 1, 7000)",
-        [("tie-a",), ("tie-b",)],
-    )
+    for session_id in ("tie-a", "tie-b"):
+        insert_session(
+            connection,
+            session_id,
+            project_id="project-root",
+            title="needle tie",
+            directory="/workspace/acme/widget",
+            updated=7000,
+        )
     connection.commit()
     connection.close()
 

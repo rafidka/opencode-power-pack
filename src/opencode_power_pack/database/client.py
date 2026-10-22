@@ -27,6 +27,7 @@ from ..semantic.documents import (
     make_semantic_documents,
 )
 from ._utils import json_object, string
+from .messages import ASSISTANT, USER, content_blocks
 from .search import search_session, sort_and_limit_matches
 from .sessions import filtered_sessions, sort_and_limit_sessions
 from .transcripts import session_transcripts
@@ -34,7 +35,7 @@ from .transcripts import session_transcripts
 _REQUIRED_COLUMNS = {
     "project": {"id", "worktree", "name"},
     "project_directory": {"project_id", "directory"},
-    "session": {
+    "session_v2": {
         "id",
         "project_id",
         "parent_id",
@@ -52,10 +53,13 @@ _REQUIRED_COLUMNS = {
         "tokens_cache_read",
         "tokens_cache_write",
     },
-    "message": {"id", "session_id", "data"},
-    "part": {"message_id", "session_id", "data"},
-    "todo": {"session_id", "content"},
+    "session_message": {"id", "session_id", "type", "seq", "time_created", "data"},
 }
+"""The OpenCode V2 tables read by this package.
+
+V1 databases are rejected rather than read: V2 copies their sessions into these
+tables on first start and stops updating the V1 tables afterwards.
+"""
 
 _SQLITE_SESSION_ID_BIND_BATCH_SIZE = 900
 """IDs per semantic query, leaving headroom below SQLite's legacy 999-bind limit."""
@@ -78,11 +82,6 @@ class OpenCodeDatabase:
         self.path = path
         self._connection: sqlite3.Connection | None = None
         self._context_transaction = False
-        self._columns: dict[str, frozenset[str]] = {}
-
-    @property
-    def _part_schema_has_id_column(self) -> bool:
-        return "id" in self._columns.get("part", frozenset())
 
     def __enter__(self) -> OpenCodeDatabase:
         self.open()
@@ -197,7 +196,7 @@ class OpenCodeDatabase:
                     SessionFilter(include_children=True, archive_mode=ArchiveMode.ALL),
                 )
             }
-            return session_transcripts(connection, query, sessions_by_id, self._columns)
+            return session_transcripts(connection, query, sessions_by_id)
 
     def list_semantic_session_revisions(self) -> Collection[SessionRevision]:
         """Return a lazy, sized view of session revisions.
@@ -238,31 +237,15 @@ class OpenCodeDatabase:
         connection = self._connection_or_error()
         placeholders = ", ".join("?" for _ in session_ids)
         sessions = connection.execute(
-            "SELECT id, title, time_updated FROM session "
+            "SELECT id, title, time_updated FROM session_v2 "
             f"WHERE id IN ({placeholders}) ORDER BY id",
             session_ids,
         ).fetchall()
         messages = connection.execute(
-            "SELECT id, session_id, data FROM message "
-            f"WHERE session_id IN ({placeholders}) ORDER BY session_id, id",
-            session_ids,
-        ).fetchall()
-        roles = {
-            row["id"]: string(json_object(row["data"]).get("role")) for row in messages
-        }
-        part_select = (
-            "SELECT id AS source_record_id, session_id, message_id, data FROM part "
-            if self._part_schema_has_id_column
-            else (
-                "SELECT rowid AS source_record_id, session_id, message_id, data "
-                "FROM part "
-            )
-        )
-        parts = connection.execute(
-            part_select
-            + f"WHERE session_id IN ({placeholders}) "
-            + "ORDER BY session_id, message_id, data",
-            session_ids,
+            "SELECT id, session_id, type, data FROM session_message "
+            f"WHERE session_id IN ({placeholders}) AND type IN (?, ?) "
+            "ORDER BY session_id, seq",
+            (*session_ids, USER, ASSISTANT),
         ).fetchall()
         documents_by_session: dict[str, list[SemanticDocument]] = {
             row["id"]: [] for row in sessions
@@ -280,26 +263,19 @@ class OpenCodeDatabase:
                         content=title,
                     )
                 )
-        for row in parts:
-            role = roles.get(row["message_id"])
-            data = json_object(row["data"])
-            text = string(data.get("text"))
-            if (
-                role not in {"user", "assistant"}
-                or string(data.get("type")) != "text"
-                or not text
-            ):
-                continue
-            documents_by_session[row["session_id"]].extend(
-                make_semantic_documents(
-                    session_id=row["session_id"],
-                    source=SemanticDocumentSource.TEXT,
-                    role=role,
-                    source_record_id=str(row["source_record_id"]),
-                    source_ordinal=0,
-                    content=text,
+        for row in messages:
+            role = row["type"]
+            for record_id, text in _visible_texts(row["id"], role, row["data"]):
+                documents_by_session[row["session_id"]].extend(
+                    make_semantic_documents(
+                        session_id=row["session_id"],
+                        source=SemanticDocumentSource.TEXT,
+                        role=role,
+                        source_record_id=record_id,
+                        source_ordinal=0,
+                        content=text,
+                    )
                 )
-            )
         return tuple(
             SessionDocumentBatch(
                 revision=SessionRevision(
@@ -319,7 +295,6 @@ class OpenCodeDatabase:
             )
         }
         missing: list[str] = []
-        columns: dict[str, frozenset[str]] = {}
         for table, required in _REQUIRED_COLUMNS.items():
             if table not in tables:
                 missing.append(table)
@@ -327,14 +302,17 @@ class OpenCodeDatabase:
             actual = {
                 row["name"] for row in connection.execute(f"PRAGMA table_info({table})")
             }
-            columns[table] = frozenset(actual)
             absent = sorted(required - actual)
             if absent:
                 missing.append(f"{table} ({', '.join(absent)})")
         if missing:
             msg = "incompatible OpenCode database schema: missing " + "; ".join(missing)
+            if "session_v2" not in tables and "session" in tables:
+                msg += (
+                    "; this looks like an OpenCode V1 database, which OpenCode V2 "
+                    "migrates when it first starts"
+                )
             raise DatabaseError(msg)
-        self._columns = columns
 
     @contextmanager
     def _read_transaction(self) -> Generator[None]:
@@ -358,7 +336,7 @@ class OpenCodeDatabase:
             if row["directory"] is not None:
                 aliases.setdefault(row["project_id"], []).append(row["directory"])
         for row in connection.execute(
-            "SELECT project_id, directory FROM session "
+            "SELECT project_id, directory FROM session_v2 "
             "WHERE project_id IS NOT NULL AND directory IS NOT NULL"
         ):
             aliases.setdefault(row["project_id"], []).append(row["directory"])
@@ -370,7 +348,7 @@ class OpenCodeDatabase:
     def _iter_semantic_session_revisions(self) -> Iterator[SessionRevision]:
         with self._read_transaction():
             rows = self._connection_or_error().execute(
-                "SELECT id, time_updated FROM session ORDER BY id"
+                "SELECT id, time_updated FROM session_v2 ORDER BY id"
             )
             yield from (
                 SessionRevision(session_id=row["id"], time_updated=row["time_updated"])
@@ -381,7 +359,7 @@ class OpenCodeDatabase:
         with self._read_transaction():
             row = (
                 self._connection_or_error()
-                .execute("SELECT COUNT(*) AS count FROM session")
+                .execute("SELECT COUNT(*) AS count FROM session_v2")
                 .fetchone()
             )
         assert row is not None
@@ -392,6 +370,27 @@ class OpenCodeDatabase:
             msg = "OpenCode database connection is not open"
             raise DatabaseError(msg)
         return self._connection
+
+
+def _visible_texts(
+    message_id: str, role: str, raw_data: object
+) -> Iterator[tuple[str, str]]:
+    """Yield ``(source record ID, text)`` for a message's product-visible text.
+
+    A user message has one text, identified by the message. Assistant text
+    blocks are identified by their position in the append-only ``content``
+    array, so a chunk keeps its ID while later blocks stream in.
+    """
+    data = json_object(raw_data)
+    if role == USER:
+        text = string(data.get("text"))
+        if text:
+            yield message_id, text
+        return
+    for index, block in enumerate(content_blocks(data)):
+        text = string(block.get("text"))
+        if string(block.get("type")) == "text" and text:
+            yield f"{message_id}:{index}", text
 
 
 def _groups(values: tuple[str, ...], size: int) -> Generator[tuple[str, ...]]:

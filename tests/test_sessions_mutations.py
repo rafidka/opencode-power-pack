@@ -9,8 +9,8 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from opencode_power_pack.cli import app
-from opencode_power_pack.errors import OpencodeServerError, UsageError
-from opencode_power_pack.server import SessionNotFound, data_home_for_database
+from opencode_power_pack.errors import UsageError
+from opencode_power_pack.server import SessionNotFound
 
 runner = CliRunner()
 
@@ -20,7 +20,6 @@ class _FakeServer:
 
     def __init__(self, missing: frozenset[str] = frozenset()) -> None:
         self.deleted: list[str] = []
-        self.archived: list[tuple[str, int]] = []
         self.missing = missing
 
     def delete_session(self, session_id: str) -> None:
@@ -28,15 +27,10 @@ class _FakeServer:
             raise SessionNotFound(f"session {session_id} does not exist")
         self.deleted.append(session_id)
 
-    def archive_session(self, session_id: str, archived_at: int) -> None:
-        if session_id in self.missing:
-            raise SessionNotFound(f"session {session_id} does not exist")
-        self.archived.append((session_id, archived_at))
-
 
 @pytest.fixture
 def server(monkeypatch: pytest.MonkeyPatch) -> _FakeServer:
-    """Replace the real ``opencode serve`` lifecycle with an in-process double."""
+    """Replace OpenCode's background service with an in-process double."""
     return _install_server(monkeypatch, _FakeServer())
 
 
@@ -123,16 +117,6 @@ def test_requires_confirmation_when_not_interactive(
     assert server.deleted == []
 
 
-def test_archive_needs_no_confirmation_and_sends_a_timestamp(
-    opencode_database: Path, server: _FakeServer
-) -> None:
-    result = invoke(opencode_database, "sessions", "archive", "session-other")
-    assert result.exit_code == 0, result.output
-    assert [session_id for session_id, _ in server.archived] == ["session-other"]
-    assert server.archived[0][1] > 1_700_000_000_000
-    assert "Archived 1 session." in result.stderr
-
-
 def test_accepts_piped_tab_separated_list_output(
     opencode_database: Path, server: _FakeServer
 ) -> None:
@@ -140,9 +124,11 @@ def test_accepts_piped_tab_separated_list_output(
     assert listed.exit_code == 0, listed.output
     assert "\t" in listed.stdout
 
-    result = invoke(opencode_database, "sessions", "archive", stdin=listed.stdout)
+    result = invoke(
+        opencode_database, "sessions", "delete", "--yes", stdin=listed.stdout
+    )
     assert result.exit_code == 0, result.output
-    assert [session_id for session_id, _ in server.archived] == [
+    assert server.deleted == [
         "session-root",
         "session-child",
         "session-other",
@@ -187,9 +173,11 @@ def test_accepts_piped_search_matches(
         opencode_database, "sessions", "search", "needle", "--format", "json"
     )
     assert matches.exit_code == 0, matches.output
-    result = invoke(opencode_database, "sessions", "archive", stdin=matches.stdout)
+    result = invoke(
+        opencode_database, "sessions", "delete", "--yes", stdin=matches.stdout
+    )
     assert result.exit_code == 0, result.output
-    assert {session_id for session_id, _ in server.archived} == {
+    assert set(server.deleted) == {
         "session-root",
         "session-child",
         "session-other",
@@ -202,12 +190,13 @@ def test_arguments_take_precedence_over_stdin(
     result = invoke(
         opencode_database,
         "sessions",
-        "archive",
+        "delete",
         "session-other",
+        "--yes",
         stdin="session-child\n",
     )
     assert result.exit_code == 0, result.output
-    assert [session_id for session_id, _ in server.archived] == ["session-other"]
+    assert server.deleted == ["session-other"]
 
 
 def test_empty_pipe_is_a_no_op(opencode_database: Path, server: _FakeServer) -> None:
@@ -261,8 +250,9 @@ def test_machine_formats_describe_outcomes(
     result = invoke(
         opencode_database,
         "sessions",
-        "archive",
+        "delete",
         "session-other",
+        "--yes",
         "--format",
         "jsonl",
     )
@@ -281,18 +271,15 @@ def test_piped_stdout_lists_applied_ids(
     opencode_database: Path, server: _FakeServer
 ) -> None:
     result = invoke(
-        opencode_database, "sessions", "archive", "session-other", "session-child"
+        opencode_database,
+        "sessions",
+        "delete",
+        "session-other",
+        "session-child",
+        "--yes",
     )
     assert result.exit_code == 0, result.output
     assert result.stdout.split() == ["session-other", "session-child"]
-
-
-def test_server_requires_the_standard_database_layout(tmp_path: Path) -> None:
-    standard = tmp_path / "share" / "opencode" / "opencode.db"
-    assert data_home_for_database(standard) == tmp_path / "share"
-
-    with pytest.raises(OpencodeServerError, match="data home"):
-        data_home_for_database(tmp_path / "elsewhere.db")
 
 
 def test_selectors_resolve_without_the_cli() -> None:

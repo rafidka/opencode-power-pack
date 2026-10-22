@@ -8,7 +8,7 @@ import typer
 CommandRegistrar = Callable[[typer.Typer], None]
 
 app = typer.Typer(
-    help="List, search, archive, and delete sessions stored by OpenCode.",
+    help="List, search, show, and delete sessions stored by OpenCode.",
     no_args_is_help=True,
 )
 
@@ -23,7 +23,6 @@ def register_available_commands() -> None:
     """Load optional command modules that expose a ``register`` function."""
     package = __name__
     for module_name in (
-        "archive_sessions",
         "delete_sessions",
         "index_sessions",
         "list_sessions",

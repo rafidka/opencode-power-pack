@@ -2,10 +2,20 @@
 
 import re
 import sqlite3
-from typing import cast
 
-from ..models import SearchSessionMatch, SearchSessionsQuery, SearchSource, Session
-from ._utils import content, json_object, string
+from ..models import (
+    PartKind,
+    SearchSessionMatch,
+    SearchSessionsQuery,
+    SearchSource,
+    Session,
+)
+from .messages import session_messages, session_todos
+
+_TEXT_SOURCES = {
+    PartKind.TEXT: SearchSource.TEXT,
+    PartKind.REASONING: SearchSource.REASONING,
+}
 
 
 def search_session(
@@ -15,56 +25,31 @@ def search_session(
     records: list[tuple[SearchSource, str | None, str]] = []
     if SearchSource.TITLE in query.sources and session.title is not None:
         records.append((SearchSource.TITLE, None, session.title))
-    role_by_message = {
-        row["id"]: string(json_object(row["data"]).get("role"))
-        for row in connection.execute(
-            "SELECT id, data FROM message WHERE session_id = ?", (session.id,)
-        )
-    }
     if query.sources & {
         SearchSource.TEXT,
         SearchSource.REASONING,
         SearchSource.TOOL_INPUT,
         SearchSource.TOOL_OUTPUT,
     }:
-        for row in connection.execute(
-            "SELECT message_id, data FROM part WHERE session_id = ?", (session.id,)
-        ):
-            data = json_object(row["data"])
-            part_type = string(data.get("type"))
-            role = role_by_message.get(row["message_id"])
+        for message in session_messages(connection, session.id):
+            role = message.role
             if query.roles and role not in query.roles:
                 continue
-            text = string(data.get("text"))
-            if (
-                part_type == "text"
-                and SearchSource.TEXT in query.sources
-                and text is not None
-            ):
-                records.append((SearchSource.TEXT, role, text))
-            if (
-                part_type == "reasoning"
-                and SearchSource.REASONING in query.sources
-                and text is not None
-            ):
-                records.append((SearchSource.REASONING, role, text))
-            state = data.get("state")
-            if isinstance(state, dict):
-                state_data = cast(dict[str, object], state)
-                for source, key in (
-                    (SearchSource.TOOL_INPUT, "input"),
-                    (SearchSource.TOOL_OUTPUT, "output"),
+            for part in message.parts:
+                if part.text is not None:
+                    source = _TEXT_SOURCES.get(part.kind)
+                    if source is not None and source in query.sources:
+                        records.append((source, role, part.text))
+                for source, tool_content in (
+                    (SearchSource.TOOL_INPUT, part.tool_input),
+                    (SearchSource.TOOL_OUTPUT, part.tool_output),
                 ):
-                    tool_content = content(state_data.get(key))
                     if source in query.sources and tool_content is not None:
                         records.append((source, role, tool_content))
     if SearchSource.TODO in query.sources:
         records.extend(
-            (SearchSource.TODO, None, row["content"])
-            for row in connection.execute(
-                "SELECT content FROM todo WHERE session_id = ?", (session.id,)
-            )
-            if row["content"] is not None
+            (SearchSource.TODO, None, todo.content)
+            for todo in session_todos(connection, session.id)
         )
     found = [
         (

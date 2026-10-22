@@ -1,13 +1,11 @@
 """Shared plumbing for the mutating session commands.
 
-``sessions delete`` and ``sessions archive`` differ only in the request they send
-to OpenCode and in whether they confirm first, so selector collection, ordering,
-reporting, and exit status live here.
+Selector collection, confirmation, ordering, reporting, and exit status live
+here, so a command supplies only the request it sends to OpenCode.
 """
 
 import sys
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import IO
@@ -43,7 +41,6 @@ class MutationVerb(StrEnum):
     """A mutation a session command can ask OpenCode to perform."""
 
     DELETE = "delete"
-    ARCHIVE = "archive"
 
     @property
     def past_tense(self) -> str:
@@ -53,7 +50,6 @@ class MutationVerb(StrEnum):
 
 _PAST_TENSE = {
     MutationVerb.DELETE: "deleted",
-    MutationVerb.ARCHIVE: "archived",
 }
 
 
@@ -203,11 +199,6 @@ def _emit(
 
 def _display(value: str | None) -> str:
     return "-" if value is None or not value.strip() else value.strip()
-
-
-def now_milliseconds() -> int:
-    """Return the current UTC time in milliseconds since the epoch."""
-    return int(datetime.now(UTC).timestamp() * 1_000)
 
 
 def handle_expected_errors(run: Callable[[], None]) -> None:

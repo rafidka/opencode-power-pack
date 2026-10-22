@@ -1,5 +1,8 @@
+import json
 import sqlite3
 from pathlib import Path
+
+from opencode_v2 import assistant, insert_message, text, user
 
 from opencode_power_pack.database import OpenCodeDatabase
 from opencode_power_pack.semantic.documents import (
@@ -29,25 +32,26 @@ def test_semantic_documents_extract_only_safe_title_and_visible_text(
         ),
         (
             SemanticDocumentSource.TEXT,
-            "assistant",
-            "The assistant also mentions needle.",
+            "user",
+            "Needle needle in user text; literal 100%_ready and 東京.",
         ),
         (
             SemanticDocumentSource.TEXT,
-            "user",
-            "Needle needle in user text; literal 100%_ready and 東京.",
+            "assistant",
+            "The assistant also mentions needle.",
         ),
     ]
     assert [document.source_record_id for document in documents] == [
         "title",
-        "part-assistant",
-        "part-user",
+        "message-user",
+        "message-assistant:0",
     ]
     content = "\n".join(document.content for document in documents)
     assert "private reasoning" not in content
     assert "tool input" not in content
     assert "tool output" not in content
     assert "Investigate needle" not in content
+    assert "synthetic needle" not in content
     assert all(document.content == document.embedding_content for document in documents)
 
 
@@ -88,8 +92,8 @@ def test_semantic_revisions_are_lazy_sized_and_consumed_inside_database_context(
         ]
 
     assert statements[:2] == [
-        "SELECT COUNT(*) AS count FROM session",
-        "SELECT id, time_updated FROM session ORDER BY id",
+        "SELECT COUNT(*) AS count FROM session_v2",
+        "SELECT id, time_updated FROM session_v2 ORDER BY id",
     ]
 
 
@@ -112,91 +116,48 @@ def test_selected_session_fetching_returns_only_requested_existing_sessions(
     ]
 
 
-def test_text_part_ids_preserve_unchanged_chunks_when_siblings_change_order(
+def test_text_ids_preserve_unchanged_chunks_when_messages_are_added_or_edited(
     opencode_database: Path,
 ) -> None:
+    def documents() -> dict[str, str]:
+        with OpenCodeDatabase(opencode_database) as database:
+            batch = database.fetch_semantic_documents({"session-root"})[0]
+        return {document.content: document.id for document in batch.documents}
+
     connection = sqlite3.connect(opencode_database)
-    connection.executemany(
-        "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            (
-                "part-alpha",
-                "session-root",
-                "message-user",
-                "text",
-                "alpha",
-                '{"type":"text","text":"alpha"}',
-                1,
-                1,
-            ),
-            (
-                "part-zeta",
-                "session-root",
-                "message-user",
-                "text",
-                "zeta",
-                '{"type":"text","text":"zeta"}',
-                1,
-                1,
-            ),
-        ],
+    insert_message(
+        connection,
+        "session-root",
+        "message-later",
+        "assistant",
+        assistant(text("alpha"), text("zeta")),
     )
     connection.commit()
     connection.close()
-
-    with OpenCodeDatabase(opencode_database) as database:
-        before = {
-            document.content: document.id
-            for document in database.fetch_semantic_documents({"session-root"})[
-                0
-            ].documents
-        }
+    before = documents()
 
     connection = sqlite3.connect(opencode_database)
-    connection.execute(
-        "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            "part-aardvark",
-            "session-root",
-            "message-user",
-            "text",
-            "aardvark",
-            '{"type":"text","text":"aardvark"}',
-            1,
-            1,
-        ),
+    insert_message(
+        connection, "session-root", "message-latest", "user", user("aardvark")
     )
     connection.commit()
     connection.close()
-
-    with OpenCodeDatabase(opencode_database) as database:
-        inserted = {
-            document.content: document.id
-            for document in database.fetch_semantic_documents({"session-root"})[
-                0
-            ].documents
-        }
+    inserted = documents()
 
     assert inserted["alpha"] == before["alpha"]
     assert inserted["zeta"] == before["zeta"]
 
     connection = sqlite3.connect(opencode_database)
     connection.execute(
-        "UPDATE part SET text = ?, data = ? WHERE id = ?",
-        ("zzzz", '{"type":"text","text":"zzzz"}', "part-alpha"),
+        "UPDATE session_message SET data = ? WHERE id = 'message-later'",
+        (json.dumps(assistant(text("zzzz"), text("zeta"))),),
     )
     connection.commit()
     connection.close()
-
-    with OpenCodeDatabase(opencode_database) as database:
-        after = {
-            document.content: document.id
-            for document in database.fetch_semantic_documents({"session-root"})[
-                0
-            ].documents
-        }
+    after = documents()
 
     assert after["zeta"] == before["zeta"]
+    assert "alpha" not in after
 
 
 def test_chunking_is_deterministic_with_overlap_and_pathological_input() -> None:

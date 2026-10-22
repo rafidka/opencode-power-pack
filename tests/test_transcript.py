@@ -249,24 +249,6 @@ def test_tool_part_with_child_session_id_attribute() -> None:
     )
 
 
-def test_patch_part_lists_files_and_is_omitted_when_empty() -> None:
-    with_files = _transcript(
-        messages=(
-            _message(
-                parts=(TranscriptPart(kind=PartKind.PATCH, files=("a.py", "b.py")),)
-            ),
-        )
-    )
-    output = render_transcript(with_files)
-    assert '<oc-patch files="a.py, b.py" />' in output
-
-    without_files = _transcript(
-        messages=(_message(parts=(TranscriptPart(kind=PartKind.PATCH, files=()),)),)
-    )
-    empty_output = render_transcript(without_files)
-    assert "<oc-patch" not in empty_output
-
-
 def test_file_part_attached_and_omitted_without_filename() -> None:
     with_filename = _transcript(
         messages=(
@@ -688,7 +670,6 @@ def test_output_ends_with_single_trailing_newline_and_no_trailing_ws() -> None:
                         tool_input="pytest -q",
                         tool_output="5 passed",
                     ),
-                    TranscriptPart(kind=PartKind.PATCH, files=("a.py",)),
                     TranscriptPart(kind=PartKind.FILE, filename="bin/debugpy"),
                     TranscriptPart(kind=PartKind.AGENT, agent_name="pr-reviewer"),
                     TranscriptPart(kind=PartKind.COMPACTION, compaction_auto=True),

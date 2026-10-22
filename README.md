@@ -16,7 +16,7 @@ For development, run `uv sync --all-groups`.
 
 ## Database and safety
 
-By default, the CLI reads:
+OpenCode V2 is required. By default, the CLI reads:
 
 ```
 ${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db
@@ -30,12 +30,13 @@ op2 --database /path/to/opencode.db sessions list
 OPENCODE_DATABASE=/path/to/opencode.db op2 sessions search "timeout"
 ```
 
-The database is opened read-only with SQLite `mode=ro` and `query_only`.
-`sessions archive` and `sessions delete` are the exceptions: they do not write to
-SQLite themselves but ask OpenCode to perform the change. When they have to start
-their own server, `--database` must name a standard
-`<data home>/opencode/opencode.db` path, because OpenCode resolves its database
-from its data directory rather than from an option.
+The database is opened read-only with SQLite `mode=ro` and `query_only`. Only
+V2's `session_v2` and `session_message` tables are read. A V1 database is
+rejected: V2 copies V1 sessions into its own tables when it first starts and
+stops updating the V1 tables afterwards, so reading them would show stale data.
+`sessions delete` is the exception to read-only access: it does not write to
+SQLite itself but asks OpenCode to perform the change, and only against the
+database used by OpenCode's background service.
 
 ## Sessions
 
@@ -115,8 +116,8 @@ Here's the guide. One decision up front, because the two failure modes overlap.
 
 **The `uccs` project inside `submittal-review`.** Its corpus is exactly the pair you want:
 </oc-text>
-<oc-tool name="bash" status="completed" title="Check repository status" />
-<oc-tool name="task" status="completed" title="Explore the codebase" session="ses_04fccdc8cffe">
+<oc-tool name="shell" status="completed" title="git status --short" />
+<oc-tool name="subagent" status="completed" title="Explore the codebase" session="ses_04fccdc8cffe">
 </oc-tool>
 </oc-message>
 <oc-todos>
@@ -139,14 +140,18 @@ output format — while `oc-` collides in none. As a last-resort guarantee, if
 content ever contains the literal `<oc-`, the whole document switches to a
 deterministic hash-suffixed prefix such as `oc-a3f9-`.
 
-Sub-agent sessions started by the `task` tool nest their own transcript inside
+Sub-agent sessions started by the `subagent` tool nest their own transcript inside
 the `<oc-tool>` element that spawned them, recursively, only with
 `--include-children`; otherwise that element is empty, as in the example
 above. Tool inputs and outputs, when opted in, appear as `<oc-input>` and
 `<oc-output>` children of `<oc-tool>`; a truncated `<oc-output>` carries a
-`truncated` attribute giving the number of characters omitted.
+`truncated` attribute giving the number of characters omitted. Tools are named
+as V2 names them, including in sessions recorded by V1 (`bash` is `shell`,
+`task` is `subagent`, `apply_patch` is `patch`). V2 stores no tool titles, so
+the title is taken from the call's description, command, path, or similar
+input.
 
-Session selectors work exactly like `sessions archive` and `sessions delete`:
+Session selectors work exactly like `sessions delete`:
 full IDs or any prefix identifying exactly one session, given as arguments or
 read from standard input when no argument is given, including the `table`,
 `json`, or `jsonl` output of `sessions list` or `sessions search`. Multiple
@@ -161,45 +166,42 @@ a 4,000–11,000 token transcript into a 40,000–350,000 token one; they are
 opt-in via `--include-tool-inputs` and `--include-tool-outputs`, each capped
 per call by `--max-tool-chars` (default 2000, 0 for unlimited). Reasoning is
 omitted by default, consistent with `sessions search`, and included with
-`--include-reasoning`. `--include-todos` appends the session todo list.
+`--include-reasoning`. `--include-todos` appends the session todo list, taken
+from the most recent `todowrite` call. OpenCode's own reminders and notices are
+not part of the transcript; compactions appear as a `compaction` message.
 
-### Archive and delete
+### Delete
 
 ```bash
 # One or more session IDs, or any prefix identifying exactly one session
-op2 sessions archive ses_8a3f2c ses_4b91
 op2 sessions delete ses_8a3f2c --yes
-
-# Archive everything that has not been touched in 90 days
-op2 sessions list --until 90d | op2 sessions archive
 
 # Delete the sessions of a repository that were already archived
 op2 sessions list --repo ~/src/spike --archived-only | op2 sessions delete --yes
 ```
 
-Both commands take session IDs as arguments, and read them from standard input
+The command takes session IDs as arguments, and reads them from standard input
 when no argument is given. Piped input may be the tab-separated `table` output
 of `sessions list` or `sessions search`, their `json` or `jsonl` output, or one
 session ID per line. Selectors resolve only when they identify a single session;
 ambiguous prefixes produce an error and nothing is changed.
 
-Archiving is reversible in OpenCode and keeps all session content; archived
-sessions are skipped by `sessions list` and `sessions search` unless
-`--include-archived` or `--archived-only` is given. Deletion is permanent and
-also removes child sessions, messages, and the session's event history, so it
-asks for confirmation unless `--yes` is passed, and refuses to run without
-`--yes` when it cannot prompt.
+Deletion is permanent and also removes child sessions, messages, and the
+session's event history, so it asks for confirmation unless `--yes` is passed,
+and refuses to run without `--yes` when it cannot prompt.
 
-Neither command modifies SQLite directly; each calls OpenCode's own session
-endpoints, which keeps cascading rules owned by OpenCode. If a local OpenCode
-server is already running on the same database — `opencode serve`, `opencode web`,
-or a TUI — it is reused, so the change is fast and its connected clients see the
-result immediately. A server is identified by the database file it holds open, not
-by its port, so a server backed by a different data directory is never used.
-Otherwise a short-lived `opencode serve` is started and stopped around the batch,
-which requires the `opencode` CLI on `PATH` and pays roughly a second of startup
-once per command. Exit status is `1` if any session failed, and each failure is
-reported with its session ID.
+The command does not modify SQLite directly; it calls OpenCode's own session
+endpoint through `opencode api`, which keeps cascading rules owned by OpenCode.
+`opencode api` finds or starts OpenCode's background service and authenticates
+with it, so the `opencode` CLI must be on `PATH`. The service always uses its own
+database, so the command refuses to run when the service is not the process
+holding the selected database open. Exit status is `1` if any session failed,
+and each failure is reported with its session ID.
+
+There is no archive command, because OpenCode V2 has no API for archiving a
+session. Sessions archived before the upgrade are still skipped by
+`sessions list` and `sessions search` unless `--include-archived` or
+`--archived-only` is given.
 
 ### Search
 
@@ -293,6 +295,5 @@ uv run op2 sessions list --help
 uv run op2 sessions show --help
 uv run op2 sessions search --help
 uv run op2 sessions index --help
-uv run op2 sessions archive --help
 uv run op2 sessions delete --help
 ```

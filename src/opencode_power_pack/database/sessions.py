@@ -23,7 +23,7 @@ def filtered_sessions(
         row["id"]: row["name"] or os.path.basename(row["worktree"])
         for row in connection.execute("SELECT id, worktree, name FROM project")
     }
-    rows = connection.execute("SELECT * FROM session").fetchall()
+    rows = connection.execute("SELECT * FROM session_v2").fetchall()
     sessions = [session_from_row(row, projects.get(row["project_id"])) for row in rows]
     return [session for session in sessions if matches_filters(session, filters)]
 

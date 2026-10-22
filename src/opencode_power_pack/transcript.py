@@ -188,11 +188,6 @@ def _render_part(
         chunk = _render_tool(part, options, prefix, matched)
         consumed = matched.session.id if matched is not None else None
         return chunk, consumed
-    if part.kind is PartKind.PATCH:
-        if not part.files:
-            return None, None
-        attrs = _attrs_line([("files", ", ".join(part.files))])
-        return f"<{prefix}patch{_tag_suffix(attrs)} />", None
     if part.kind is PartKind.FILE:
         if part.filename is None:
             return None, None

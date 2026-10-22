@@ -1,7 +1,7 @@
 """Session selector parsing and resolution shared by mutating commands.
 
 Selectors arrive as command arguments or on standard input, which lets
-``op2 sessions list`` feed ``op2 sessions delete`` and ``op2 sessions archive``.
+``op2 sessions list`` feed ``op2 sessions show`` and ``op2 sessions delete``.
 A selector is a full session ID or any prefix that identifies exactly one
 session.
 """
