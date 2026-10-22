@@ -7,111 +7,33 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 from rich.console import Console
-from rich.progress import BarColumn, Progress, TaskID, TaskProgressColumn, TextColumn
 
 from opencode_power_pack.database import resolve_database_path
-from opencode_power_pack.errors import (
-    OpencodePowerPackError,
-    RuntimeCommandError,
-    UsageError,
-)
+from opencode_power_pack.errors import OpencodePowerPackError, UsageError
 from opencode_power_pack.models import OutputFormat
 from opencode_power_pack.output import emit_json, emit_table
+
+from ._index_progress import SyncProgressRenderer
 
 if TYPE_CHECKING:
     from opencode_power_pack.semantic import (
         CohereEmbedProvider,
         SemanticService,
-        SemanticSyncEvent,
-        SemanticSyncPlanned,
         SemanticSyncResult,
     )
-
-
-class _SyncProgressRenderer:
-    def __init__(self, console: Console) -> None:
-        self._progress = Progress(
-            TextColumn("{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console,
-            transient=True,
-        )
-        self._started = False
-        self._documents_task: TaskID | None = None
-        self._sessions_task: TaskID | None = None
-        self._deleted_task: TaskID | None = None
-
-    def __call__(self, event: SemanticSyncEvent) -> None:
-        try:
-            from opencode_power_pack.semantic import (
-                SemanticEmbeddingBatchCompleted,
-                SemanticSessionSynchronized,
-                SemanticSyncPlanned,
-            )
-
-            if isinstance(event, SemanticSyncPlanned):
-                self._plan(event)
-                return
-            if isinstance(event, SemanticEmbeddingBatchCompleted):
-                self._advance(self._documents_task, event.document_count)
-                return
-            if isinstance(event, SemanticSessionSynchronized):
-                self._advance(self._sessions_task, 1)
-                return
-            self._advance(self._deleted_task, len(event.session_ids))
-        except OpencodePowerPackError:
-            raise
-        except Exception as error:
-            raise RuntimeCommandError(
-                f"could not render indexing progress: {error}"
-            ) from error
-
-    def _plan(self, event: SemanticSyncPlanned) -> None:
-        if self._started:
-            return
-        if (
-            event.document_count == 0
-            and event.changed_session_count == 0
-            and event.deleted_session_count == 0
-        ):
-            return
-        self._progress.start()
-        self._started = True
-        if event.document_count:
-            self._documents_task = self._progress.add_task(
-                "Embedding documents", total=event.document_count
-            )
-        if event.changed_session_count:
-            self._sessions_task = self._progress.add_task(
-                "Synchronizing sessions", total=event.changed_session_count
-            )
-        if event.deleted_session_count:
-            self._deleted_task = self._progress.add_task(
-                "Deleting sessions", total=event.deleted_session_count
-            )
-
-    def _advance(self, task_id: TaskID | None, amount: int) -> None:
-        if task_id is not None:
-            self._progress.advance(task_id, amount)
-
-    def stop(self) -> None:
-        if self._started:
-            self._progress.stop()
-            self._started = False
 
 
 def _stderr_console() -> Console:
     return Console(stderr=True)
 
 
-def _progress_renderer(output_format: OutputFormat) -> _SyncProgressRenderer | None:
+def _progress_renderer(output_format: OutputFormat) -> SyncProgressRenderer | None:
     if output_format is not OutputFormat.TABLE:
         return None
     console = _stderr_console()
     if not console.is_terminal:
         return None
-    return _SyncProgressRenderer(console)
+    return SyncProgressRenderer(console)
 
 
 def _semantic_dependencies() -> tuple[
@@ -140,9 +62,7 @@ def index_sessions(
     context: typer.Context,
     rebuild: Annotated[
         bool,
-        typer.Option(
-            "--rebuild", help="Clear and recreate semantic chunks."
-        ),
+        typer.Option("--rebuild", help="Clear and recreate semantic chunks."),
     ] = False,
     force: Annotated[
         bool,

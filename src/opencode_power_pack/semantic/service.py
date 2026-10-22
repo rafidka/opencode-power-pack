@@ -304,6 +304,7 @@ class SemanticService:
         snippet_length: int = 200,
         limit: int | None = None,
         rerank: bool = True,
+        on_progress: SemanticSyncProgressCallback | None = None,
     ) -> tuple[SemanticSearchMatch, ...]:
         """Synchronize lazily, then rank eligible sessions against ``text``.
 
@@ -311,8 +312,9 @@ class SemanticService:
         ``SEMANTIC_RERANK_CANDIDATES`` of them are rescored by Cohere Rerank and
         each session is ranked by its best reranked chunk; otherwise sessions
         keep their cosine order. ``limit`` defaults to ``SEMANTIC_RESULT_LIMIT``.
+        ``on_progress`` receives the events of the synchronization.
         """
-        self.sync()
+        self.sync(on_progress=on_progress)
         limit = SEMANTIC_RESULT_LIMIT if limit is None else limit
         if limit == 0:
             return ()

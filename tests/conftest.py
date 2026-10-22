@@ -16,6 +16,8 @@ from opencode_v2 import (
     user,
 )
 
+from opencode_power_pack.models import SearchSessionMatch, SearchSource, Session
+
 
 @pytest.fixture
 def opencode_database(tmp_path: Path) -> Iterator[Path]:
@@ -142,3 +144,78 @@ def opencode_database(tmp_path: Path) -> Iterator[Path]:
     connection.commit()
     connection.close()
     yield database
+
+
+@pytest.fixture
+def search_api(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Replace the database behind both search commands with an in-memory double."""
+    from opencode_power_pack.commands.sessions import (
+        _search_common,
+        grep_sessions,
+        search_sessions,
+    )
+
+    captured: dict[str, object] = {}
+    match = SearchSessionMatch(
+        session=Session(
+            id="ses_123",
+            title="A title\nwith whitespace",
+            created=1,
+            updated=1_700_000_000_000,
+            project_id="project-1",
+            directory="/work/example",
+            repository="example-repo",
+        ),
+        source=SearchSource.TEXT,
+        role="assistant",
+        snippet="A matching\nsnippet",
+        match_count=2,
+    )
+
+    class Database:
+        def __init__(self, path: Path) -> None:
+            captured["path"] = path
+
+        def __enter__(self) -> Database:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def list_repositories(self) -> tuple[str, ...]:
+            return ()
+
+        def search_sessions(self, query: object) -> tuple[SearchSessionMatch, ...]:
+            captured["query"] = query
+            return (match,)
+
+    class Resolver:
+        def __init__(self, repositories: object) -> None:
+            captured["repositories"] = repositories
+
+        def resolve_many(self, names: object) -> frozenset[str]:
+            captured["repo_names"] = names
+            return frozenset({f"id:{name}" for name in names})
+
+        def resolve_cwd(self, cwd: Path) -> Session:
+            captured["cwd"] = cwd
+            return Session(
+                id="",
+                title=None,
+                created=None,
+                updated=None,
+                project_id="cwd-project",
+                directory=None,
+            )
+
+    def resolve(path: Path | None) -> Path:
+        captured["explicit_path"] = path
+        return Path("/resolved/database.db")
+
+    for module in (_search_common, grep_sessions):
+        monkeypatch.setattr(module, "OpenCodeDatabase", Database)
+    monkeypatch.setattr(_search_common, "RepositoryResolver", Resolver)
+    for module in (grep_sessions, search_sessions):
+        monkeypatch.setattr(module, "resolve_database_path", resolve)
+    captured["match"] = match
+    return captured

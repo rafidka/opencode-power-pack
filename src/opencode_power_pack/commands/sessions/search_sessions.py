@@ -1,33 +1,28 @@
-"""The ``sessions search`` command."""
+"""The ``sessions search`` command: semantic search over session content."""
 
 from __future__ import annotations
 
-import re
-from datetime import UTC, datetime
-from enum import StrEnum
-from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+from rich.console import Console
 
-from ...database import OpenCodeDatabase, resolve_database_path
-from ...errors import OpencodePowerPackError, TimeParseError
-from ...models import (
-    ArchiveMode,
-    OutputFormat,
-    SearchSessionMatch,
-    SearchSessionsQuery,
-    SearchSource,
-    SessionFilter,
+from ...database import resolve_database_path
+from ...errors import EmbeddingError, OpencodePowerPackError
+from ...models import OutputFormat, SearchSource
+from ...output import emit_json_array, emit_jsonl
+from ._index_progress import SearchSyncNotice
+from ._search_common import (
+    Role,
+    Source,
+    emit_matches,
+    selected_roles,
+    session_filter,
+    validate_query,
 )
-from ...output import emit_json_array, emit_jsonl, emit_table
-from ...repositories import RepositoryResolver
-from ...timeparse import parse_time
 
 if TYPE_CHECKING:
-    from ...semantic import CohereEmbedProvider, SemanticSearchMatch, SemanticService
-
-_WHITESPACE = re.compile(r"\s+")
+    from ...semantic import CohereEmbedProvider, SemanticService
 
 
 def _semantic_dependencies() -> tuple[type[CohereEmbedProvider], type[SemanticService]]:
@@ -36,66 +31,18 @@ def _semantic_dependencies() -> tuple[type[CohereEmbedProvider], type[SemanticSe
     return CohereEmbedProvider, SemanticService
 
 
-class _Role(StrEnum):
-    USER = "user"
-    ASSISTANT = "assistant"
-
-
-class _OrdinarySource(StrEnum):
-    TITLE = "title"
-    TEXT = "text"
-
-
-def _parse_time_option(value: str | None, option_name: str) -> int | None:
-    if value is None:
-        return None
-    try:
-        return parse_time(value)
-    except TimeParseError as error:
-        raise typer.BadParameter(str(error), param_hint=option_name) from error
-
-
-def _display(value: object | None) -> str:
-    if value is None:
-        return "—"
-    text = _WHITESPACE.sub(" ", str(value)).strip()
-    return text or "—"
-
-
-def _display_directory(value: str | None) -> str:
-    if value is None:
-        return "—"
-    path = Path(value)
-    try:
-        return f"~/{path.relative_to(Path.home())}"
-    except ValueError:
-        return _display(value)
-
-
-def _display_repository(repository: str | None, directory: str | None) -> str:
-    return f"{_display(repository)}\n{_display_directory(directory)}"
-
-
-def _display_updated(value: int | None) -> str:
-    if value is None:
-        return "—"
-    try:
-        return datetime.fromtimestamp(value / 1_000, UTC).strftime("%Y-%m-%d %H:%M")
-    except OverflowError, OSError, ValueError:
-        return _display(value)
-
-
-def _validate_query(value: str) -> str:
-    if not value.strip():
-        raise typer.BadParameter("must not be empty")
-    return value
+def _stderr_console() -> Console:
+    return Console(stderr=True)
 
 
 def _search(
     context: typer.Context,
     query: Annotated[
         str,
-        typer.Argument(help="Text to search for.", callback=_validate_query),
+        typer.Argument(
+            help="A natural-language description of what to find.",
+            callback=validate_query,
+        ),
     ],
     repositories: Annotated[
         list[str] | None,
@@ -107,7 +54,9 @@ def _search(
     ] = False,
     max_count: Annotated[
         int | None,
-        typer.Option("-n", "--max-count", min=0, help="Return at most N matches."),
+        typer.Option(
+            "-n", "--max-count", min=0, help="Return at most N sessions (default 5)."
+        ),
     ] = None,
     include_children: Annotated[
         bool, typer.Option("--include-children", help="Include child sessions.")
@@ -123,36 +72,14 @@ def _search(
     models: Annotated[list[str] | None, typer.Option("--model")] = None,
     since: Annotated[str | None, typer.Option("--since")] = None,
     until: Annotated[str | None, typer.Option("--until")] = None,
-    roles: Annotated[
-        list[_Role] | None,
-        typer.Option("--role"),
-    ] = None,
+    roles: Annotated[list[Role] | None, typer.Option("--role")] = None,
     sources: Annotated[
-        list[_OrdinarySource] | None,
-        typer.Option("--in", help="Search title, text, or an opted-in content source."),
+        list[Source] | None,
+        typer.Option("--in", help="Search session titles or message text."),
     ] = None,
-    include_reasoning: Annotated[bool, typer.Option("--include-reasoning")] = False,
-    include_tool_inputs: Annotated[bool, typer.Option("--include-tool-inputs")] = False,
-    include_tool_outputs: Annotated[
-        bool, typer.Option("--include-tool-outputs")
-    ] = False,
-    case_sensitive: Annotated[bool, typer.Option("--case-sensitive")] = False,
-    semantic: Annotated[
-        bool,
-        typer.Option(
-            "--semantic",
-            help=(
-                "Search semantically. Content is sent to Cohere and incrementally "
-                "indexed."
-            ),
-        ),
-    ] = False,
     no_rerank: Annotated[
         bool,
-        typer.Option(
-            "--no-rerank",
-            help="With --semantic, rank by embedding similarity alone.",
-        ),
+        typer.Option("--no-rerank", help="Rank by embedding similarity alone."),
     ] = False,
     snippet_length: Annotated[
         int, typer.Option("--snippet-length", min=1, help="Maximum snippet length.")
@@ -161,172 +88,71 @@ def _search(
         OutputFormat, typer.Option("--format", help="Output format.")
     ] = OutputFormat.TABLE,
 ) -> None:
-    if repositories and cwd:
-        raise typer.BadParameter("--repo cannot be used with --cwd")
-    if include_archived and archived_only:
-        raise typer.BadParameter(
-            "--include-archived cannot be used with --archived-only"
-        )
-    if no_rerank and not semantic:
-        raise typer.BadParameter(
-            "--no-rerank requires --semantic", param_hint="--no-rerank"
-        )
-    if semantic:
-        unsupported_options = (
-            (include_reasoning, "--include-reasoning"),
-            (include_tool_inputs, "--include-tool-inputs"),
-            (include_tool_outputs, "--include-tool-outputs"),
-            (case_sensitive, "--case-sensitive"),
-        )
-        for enabled, option_name in unsupported_options:
-            if enabled:
-                raise typer.BadParameter(
-                    f"{option_name} is not supported with --semantic",
-                    param_hint=option_name,
-                )
+    """Find sessions by meaning, using Cohere Embed and Rerank.
 
-    since_ms = _parse_time_option(since, "--since")
-    until_ms = _parse_time_option(until, "--until")
-    if since_ms is not None and until_ms is not None and since_ms >= until_ms:
-        raise typer.BadParameter("--since must be earlier than --until")
+    New or changed sessions are embedded before searching; use
+    ``op2 sessions grep`` for literal text matching instead.
+    """
+    from ...cli import get_app_context
 
-    selected_sources = {SearchSource(source) for source in (sources or _OrdinarySource)}
-    if include_reasoning:
-        selected_sources.add(SearchSource.REASONING)
-    if include_tool_inputs:
-        selected_sources.add(SearchSource.TOOL_INPUT)
-    if include_tool_outputs:
-        selected_sources.add(SearchSource.TOOL_OUTPUT)
-
-    if archived_only:
-        archive_mode = ArchiveMode.ARCHIVED
-    elif include_archived:
-        archive_mode = ArchiveMode.ALL
-    else:
-        archive_mode = ArchiveMode.ACTIVE
-
-    semantic_matches: tuple[SemanticSearchMatch, ...] = ()
-    matches: tuple[SearchSessionMatch, ...] = ()
-    service_type: type[SemanticService] | None = None
+    notice: SearchSyncNotice | None = None
     try:
-        from ...cli import get_app_context
-
-        app_context = get_app_context(context)
-        if semantic:
-            provider_type, service_type = _semantic_dependencies()
-            provider = provider_type()
-        else:
-            provider = None
-        database_path = resolve_database_path(app_context.database)
-        with OpenCodeDatabase(database_path) as database:
-            resolver = RepositoryResolver(database.list_repositories())
-            if cwd:
-                repository_ids = frozenset(
-                    {resolver.resolve_cwd(Path.cwd()).project_id}
-                )
-            else:
-                repository_ids = resolver.resolve_many(repositories or ())
-        filters = SessionFilter(
-            repository_project_ids=repository_ids,
+        database_path = resolve_database_path(get_app_context(context).database)
+        filters = session_filter(
+            database_path,
+            repositories=repositories or (),
+            cwd=cwd,
             include_children=include_children,
-            archive_mode=archive_mode,
-            agents=frozenset(agents or ()),
-            providers=frozenset(providers or ()),
-            models=frozenset(models or ()),
-            since=since_ms,
-            until=until_ms,
+            include_archived=include_archived,
+            archived_only=archived_only,
+            agents=agents or (),
+            providers=providers or (),
+            models=models or (),
+            since=since,
+            until=until,
         )
-        selected_roles = frozenset(roles or (_Role.USER, _Role.ASSISTANT))
-        if semantic:
-            assert provider is not None and service_type is not None
-            service = service_type(database_path, provider)
-            semantic_matches = service.search(
-                query,
-                filters=filters,
-                sources=frozenset(selected_sources),
-                roles=selected_roles,
-                snippet_length=snippet_length,
-                limit=max_count,
-                rerank=not no_rerank,
-            )
-        else:
-            search_query = SearchSessionsQuery(
-                text=query,
-                filters=filters,
-                sources=frozenset(selected_sources),
-                roles=selected_roles,
-                case_sensitive=case_sensitive,
-                snippet_length=snippet_length,
-                limit=max_count,
-            )
-            with OpenCodeDatabase(database_path) as database:
-                matches = database.search_sessions(search_query)
+        provider_type, service_type = _semantic_dependencies()
+        try:
+            provider = provider_type()
+        except EmbeddingError as error:
+            raise EmbeddingError(
+                f"{error}; `op2 sessions grep` searches literal text without it"
+            ) from error
+        console = _stderr_console()
+        notice = SearchSyncNotice(
+            console,
+            show_progress=output_format is OutputFormat.TABLE and console.is_terminal,
+        )
+        matches = service_type(database_path, provider).search(
+            query,
+            filters=filters,
+            sources=frozenset(SearchSource(source) for source in (sources or Source)),
+            roles=selected_roles(roles),
+            snippet_length=snippet_length,
+            limit=max_count,
+            rerank=not no_rerank,
+            on_progress=notice,
+        )
     except OpencodePowerPackError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(error.exit_code) from None
-
-    results: tuple[SemanticSearchMatch, ...] | tuple[SearchSessionMatch, ...]
-    if semantic:
-        results = semantic_matches
-    else:
-        results = matches
+    finally:
+        if notice is not None:
+            notice.stop()
 
     if output_format is OutputFormat.JSON:
-        emit_json_array(results)
+        emit_json_array(matches)
         return
     if output_format is OutputFormat.JSONL:
-        emit_jsonl(results)
+        emit_jsonl(matches)
         return
-    if not results:
+    if not matches:
         typer.echo("No matching sessions.")
         return
-    if semantic:
-        emit_table(
-            (
-                "Updated",
-                "Repository",
-                "Title",
-                "Source",
-                "Snippet",
-                "Score",
-                "Session ID",
-            ),
-            (
-                (
-                    _display_updated(match.session.updated),
-                    _display_repository(
-                        match.session.repository, match.session.directory
-                    ),
-                    _display(match.session.title),
-                    _display(match.source.value),
-                    _display(match.snippet),
-                    f"{match.score:.3f}",
-                    _display(match.session.id),
-                )
-                for match in semantic_matches
-            ),
-        )
-        return
-    emit_table(
+    emit_matches(
+        "Score",
         (
-            "Updated",
-            "Repository",
-            "Title",
-            "Source",
-            "Snippet",
-            "Matches",
-            "Session ID",
-        ),
-        (
-            (
-                _display_updated(match.session.updated),
-                _display_repository(match.session.repository, match.session.directory),
-                _display(match.session.title),
-                _display(match.source.value),
-                _display(match.snippet),
-                match.match_count,
-                _display(match.session.id),
-            )
+            (match.session, match.source.value, match.snippet, f"{match.score:.3f}")
             for match in matches
         ),
     )

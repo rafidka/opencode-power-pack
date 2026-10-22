@@ -380,14 +380,14 @@ def test_provider_error_stops_tty_progress_without_traceback(
     from opencode_power_pack.commands.sessions import index_sessions
 
     stopped = False
-    original_stop = index_sessions._SyncProgressRenderer.stop
+    original_stop = index_sessions.SyncProgressRenderer.stop
 
-    def stop(renderer: index_sessions._SyncProgressRenderer) -> None:
+    def stop(renderer: index_sessions.SyncProgressRenderer) -> None:
         nonlocal stopped
         stopped = True
         original_stop(renderer)
 
-    monkeypatch.setattr(index_sessions._SyncProgressRenderer, "stop", stop)
+    monkeypatch.setattr(index_sessions.SyncProgressRenderer, "stop", stop)
     result = CliRunner().invoke(_app(), ["index"])
 
     assert result.exit_code == 1

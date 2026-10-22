@@ -170,7 +170,7 @@ def test_accepts_piped_search_matches(
     opencode_database: Path, server: _FakeServer
 ) -> None:
     matches = invoke(
-        opencode_database, "sessions", "search", "needle", "--format", "json"
+        opencode_database, "sessions", "grep", "needle", "--format", "json"
     )
     assert matches.exit_code == 0, matches.output
     result = invoke(

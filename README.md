@@ -27,7 +27,7 @@ Use another database with the global `--database` option or
 
 ```bash
 op2 --database /path/to/opencode.db sessions list
-OPENCODE_DATABASE=/path/to/opencode.db op2 sessions search "timeout"
+OPENCODE_DATABASE=/path/to/opencode.db op2 sessions grep "timeout"
 ```
 
 The database is opened read-only with SQLite `mode=ro` and `query_only`. Only
@@ -151,7 +151,8 @@ input.
 Session selectors work exactly like `sessions delete`:
 full IDs or any prefix identifying exactly one session, given as arguments or
 read from standard input when no argument is given, including the `table`,
-`json`, or `jsonl` output of `sessions list` or `sessions search`. Multiple
+`json`, or `jsonl` output of `sessions list`, `sessions search`, or
+`sessions grep`. Multiple
 sessions are consecutive `<oc-session>` elements with no separator, which is
 what makes `op2 sessions search "..." | op2 sessions show` useful for feeding
 several related conversations into a single summary.
@@ -162,7 +163,7 @@ account for roughly 90% of stored conversation bytes, so including them turns
 a 4,000–11,000 token transcript into a 40,000–350,000 token one; they are
 opt-in via `--include-tool-inputs` and `--include-tool-outputs`, each capped
 per call by `--max-tool-chars` (default 2000, 0 for unlimited). Reasoning is
-omitted by default, consistent with `sessions search`, and included with
+omitted by default, consistent with `sessions grep`, and included with
 `--include-reasoning`. OpenCode's own reminders and notices are
 not part of the transcript; compactions appear as a `compaction` message.
 
@@ -178,7 +179,8 @@ op2 sessions list --repo ~/src/spike --archived-only | op2 sessions delete --yes
 
 The command takes session IDs as arguments, and reads them from standard input
 when no argument is given. Piped input may be the tab-separated `table` output
-of `sessions list` or `sessions search`, their `json` or `jsonl` output, or one
+of `sessions list`, `sessions search`, or `sessions grep`, their `json` or
+`jsonl` output, or one
 session ID per line. Selectors resolve only when they identify a single session;
 ambiguous prefixes produce an error and nothing is changed.
 
@@ -196,46 +198,23 @@ and each failure is reported with its session ID.
 
 There is no archive command, because OpenCode V2 has no API for archiving a
 session. Sessions archived before the upgrade are still skipped by
-`sessions list` and `sessions search` unless `--include-archived` or
+`sessions list`, `sessions search`, and `sessions grep` unless
+`--include-archived` or
 `--archived-only` is given.
 
 ### Search
 
-```bash
-# Literal search (the default) of titles and user/assistant text
-op2 sessions search "migration failure"
-
-# Search the current repository with a shorter snippet
-op2 sessions search "rate limit" --cwd --snippet-length 120
-
-# Search titles and opted-in tool output
-op2 sessions search "deploy" --in title --include-tool-outputs --format json
-```
-
-Searches title and text by default. `--in title` or `--in text` restricts the
-ordinary sources; `--include-reasoning`,
-`--include-tool-inputs`, and `--include-tool-outputs` opt into additional
-content. Use repeated `--role user` or `--role assistant` to filter message
-content. Search also accepts the list repository, archive, session, and time
-filters, plus `--case-sensitive`, `--max-count`, `--snippet-length`, and the
-`table`, `json`, or `jsonl` output formats.
-
-Search terms are literal. Repository selectors resolve only when they uniquely
-identify a repository; ambiguous selectors produce an error.
-
-### Semantic search
-
-Semantic search finds sessions from a natural-language description. Semantic
-search and indexing require `COHERE_API_KEY` to already be set in the process
-environment. Configure it through your shell environment or secret manager
+`sessions search` finds sessions by meaning, from a natural-language
+description. It requires `COHERE_API_KEY` to already be set in the process
+environment; configure it through your shell environment or secret manager
 before invoking `op2`.
 
 ```bash
-# Search by meaning instead of literal terms
-op2 sessions search "why did deployment fail?" --semantic
+# The 5 sessions most relevant to a description
+op2 sessions search "why did deployment fail?"
 
-# JSON results
-op2 sessions search "authentication issue" --semantic --format json
+# Restrict to the current repository, as JSON
+op2 sessions search "authentication issue" --cwd --format json
 
 # Explicitly synchronize the index, or rescan/recreate it
 op2 sessions index
@@ -243,25 +222,54 @@ op2 sessions index --force
 op2 sessions index --rebuild --format json
 ```
 
-Semantic indexing uses Cohere's `embed-v5.0-fast` model with 1024 dimensions.
-Table-format indexing shows interactive progress on a TTY; Cohere failures include
-safe, actionable status guidance without exposing request content or credentials.
-An index built with a different model is rejected; rebuild it with
-`op2 sessions index --rebuild`.
+Every search first brings the semantic index up to date. When there are new or
+changed sessions to embed, it says so on stderr before doing it, for example
+`Indexing 3 new or changed sessions (41 chunks to embed) before searching…`,
+followed by a progress bar on a terminal. Searches with nothing to embed say
+nothing. Machine-readable output on stdout is never affected. Running
+`op2 sessions index` ahead of time moves that wait out of the search.
 
-A semantic search pre-ranks indexed chunks by cosine similarity, takes the best
-50 (at most 3 from any one session), and rescores them with Cohere's
+Indexing uses Cohere's `embed-v5.0-fast` model with 1024 dimensions; Cohere
+failures include safe, actionable status guidance without exposing request
+content or credentials. An index built with a different model is rejected;
+rebuild it with `op2 sessions index --rebuild`.
+
+A search pre-ranks indexed chunks by cosine similarity, takes the best 50 (at
+most 3 from any one session), and rescores them with Cohere's
 `rerank-v5.0-fast`. Each session is ranked by its best reranked chunk, and its
 score is Rerank's calibrated relevance: roughly the probability that the chunk
 is useful. `--no-rerank` skips the Rerank call and ranks by cosine similarity
 alone. The candidate count, per-session cap, and default result count are
 constants in `semantic/service.py`.
 
-Semantic search supports the usual title/text selection, `--role`, repository,
-session, archive, agent/provider/model, and time filters. It returns 5 results
-by default; use `-n`/`--max-count` to change that. `--case-sensitive` and the
-sensitive `--include-reasoning`, `--include-tool-inputs`, and
-`--include-tool-outputs` flags cannot be used with `--semantic`.
+Search covers titles and user/assistant text; `--in title` or `--in text`
+restricts that, and repeated `--role user` or `--role assistant` filters message
+content. It also accepts the list repository, archive, session, and time
+filters, `-n`/`--max-count` (default 5), `--snippet-length`, and the `table`,
+`json`, or `jsonl` output formats.
+
+### Grep
+
+`sessions grep` finds sessions containing literal text. It needs no API key
+and sends nothing anywhere.
+
+```bash
+# Titles and user/assistant text containing a phrase
+op2 sessions grep "migration failure"
+
+# Search the current repository with a shorter snippet
+op2 sessions grep "rate limit" --cwd --snippet-length 120
+
+# Search titles and opted-in tool output
+op2 sessions grep "deploy" --in title --include-tool-outputs --format json
+```
+
+Matching is literal and case-insensitive unless `--case-sensitive` is given, and
+every match is returned unless `--max-count` limits it. Grep accepts the same
+filters as search. `--include-reasoning`, `--include-tool-inputs`, and
+`--include-tool-outputs` opt into content that search never indexes. Repository
+selectors resolve only when they uniquely identify a repository; ambiguous
+selectors produce an error.
 
 ## Privacy and performance
 
@@ -302,6 +310,7 @@ uv run op2 --help
 uv run op2 sessions list --help
 uv run op2 sessions show --help
 uv run op2 sessions search --help
+uv run op2 sessions grep --help
 uv run op2 sessions index --help
 uv run op2 sessions delete --help
 ```

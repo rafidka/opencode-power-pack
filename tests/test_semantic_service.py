@@ -259,7 +259,7 @@ def test_sync_progress_callback_error_stops_before_index_mutation(
         assert index.indexed_revisions()["session-root"] != "7000"
 
 
-def test_search_sync_is_silent(opencode_database: Path, tmp_path: Path) -> None:
+def test_search_forwards_sync_progress(opencode_database: Path, tmp_path: Path) -> None:
     service = SemanticService(
         opencode_database, FakeProvider(), tmp_path / "index.sqlite"
     )
@@ -273,8 +273,9 @@ def test_search_sync_is_silent(opencode_database: Path, tmp_path: Path) -> None:
     service.sync = sync  # type: ignore[method-assign]
 
     service.search("needle", limit=0)
+    service.search("needle", limit=0, on_progress=print)
 
-    assert sync_calls == [{}]
+    assert sync_calls == [{"on_progress": None}, {"on_progress": print}]
 
 
 def test_sync_is_incremental_removes_sessions_and_rebuilds(

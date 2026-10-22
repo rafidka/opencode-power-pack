@@ -51,6 +51,7 @@ def test_root_sessions_help_and_version() -> None:
     assert command_names.count("index") == 1
     assert command_names.count("list") == 1
     assert command_names.count("search") == 1
+    assert command_names.count("grep") == 1
 
 
 def test_help_does_not_load_semantic_dependencies(
@@ -70,6 +71,7 @@ def test_help_does_not_load_semantic_dependencies(
         ["sessions", "index", "--help"],
         ["sessions", "list", "--help"],
         ["sessions", "search", "--help"],
+        ["sessions", "grep", "--help"],
     ):
         result = runner.invoke(app, arguments)
         assert result.exit_code == 0, result.output
@@ -220,11 +222,11 @@ def test_list_ambiguous_and_unique_repository_filters(opencode_database: Path) -
     }
 
 
-def test_search_defaults_roles_sources_and_literal_unicode_matching(
+def test_grep_defaults_roles_sources_and_literal_unicode_matching(
     opencode_database: Path,
 ) -> None:
     default = invoke(
-        opencode_database, "sessions", "search", "needle", "--format", "json"
+        opencode_database, "sessions", "grep", "needle", "--format", "json"
     )
     assert default.exit_code == 0, default.output
     matches = json_output(default)
@@ -243,7 +245,7 @@ def test_search_defaults_roles_sources_and_literal_unicode_matching(
     user = invoke(
         opencode_database,
         "sessions",
-        "search",
+        "grep",
         "assistant",
         "--role",
         "assistant",
@@ -256,7 +258,7 @@ def test_search_defaults_roles_sources_and_literal_unicode_matching(
     reasoning = invoke(
         opencode_database,
         "sessions",
-        "search",
+        "grep",
         "private reasoning",
         "--include-reasoning",
         "--format",
@@ -268,7 +270,7 @@ def test_search_defaults_roles_sources_and_literal_unicode_matching(
     tool = invoke(
         opencode_database,
         "sessions",
-        "search",
+        "grep",
         "tool output",
         "--include-tool-outputs",
         "--format",
@@ -280,7 +282,7 @@ def test_search_defaults_roles_sources_and_literal_unicode_matching(
     literal = invoke(
         opencode_database,
         "sessions",
-        "search",
+        "grep",
         "100%_ready",
         "--format",
         "json",
@@ -290,9 +292,7 @@ def test_search_defaults_roles_sources_and_literal_unicode_matching(
         "session-root"
     ]
 
-    unicode = invoke(
-        opencode_database, "sessions", "search", "東京", "--format", "json"
-    )
+    unicode = invoke(opencode_database, "sessions", "grep", "東京", "--format", "json")
     assert unicode.exit_code == 0, unicode.output
     assert [match["session"]["id"] for match in json_output(unicode)] == [
         "session-root"
