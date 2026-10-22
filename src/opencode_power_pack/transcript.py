@@ -23,7 +23,6 @@ from opencode_power_pack.models import (
     Transcript,
     TranscriptMessage,
     TranscriptPart,
-    TranscriptTodo,
     ValueModel,
 )
 
@@ -122,17 +121,6 @@ def _truncate(content: str, max_chars: int) -> tuple[str, int]:
 def _render_body(prefix: str, tag: str, content: str, truncated: int = 0) -> str:
     attrs = f' truncated="{truncated}"' if truncated > 0 else ""
     return f"<{prefix}{tag}{attrs}>\n{content}\n</{prefix}{tag}>"
-
-
-def _render_todo(todo: TranscriptTodo, prefix: str) -> str:
-    attrs = _attrs_line([("status", todo.status)])
-    return f"<{prefix}todo{_tag_suffix(attrs)}>{todo.content}</{prefix}todo>"
-
-
-def _render_todos(todos: Sequence[TranscriptTodo], prefix: str) -> str:
-    tag = f"{prefix}todos"
-    lines = [f"<{tag}>", *(_render_todo(todo, prefix) for todo in todos), f"</{tag}>"]
-    return "\n".join(lines)
 
 
 def _render_tool(
@@ -295,9 +283,6 @@ def _render_session(
         body_chunks.append(chunk)
         consumed |= used
 
-    if transcript.todos:
-        body_chunks.append(_render_todos(transcript.todos, prefix))
-
     for child in transcript.children:
         if child.session.id not in consumed:
             body_chunks.append(_render_session(child, options, prefix))
@@ -336,8 +321,6 @@ def _collect_transcript_bodies(
                 if options.include_tool_outputs and part.tool_output:
                     content, _ = _truncate(part.tool_output, options.max_tool_chars)
                     bodies.append(content)
-    for todo in transcript.todos:
-        bodies.append(todo.content)
     for child in transcript.children:
         _collect_transcript_bodies(child, options, bodies)
 

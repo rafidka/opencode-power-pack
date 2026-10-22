@@ -169,7 +169,7 @@ class OpenCodeDatabase:
     def search_sessions(
         self, query: SearchSessionsQuery
     ) -> tuple[SearchSessionMatch, ...]:
-        """Search current title, message part, and todo materialized records."""
+        """Search current session titles and message content."""
         with self._read_transaction():
             connection = self._connection_or_error()
             matches = [

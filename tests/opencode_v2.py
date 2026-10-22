@@ -191,17 +191,3 @@ def tool(
     if metadata is not None:
         state["metadata"] = metadata
     return {"type": "tool", "id": call_id, "name": name, "state": state}
-
-
-def todowrite(*todos: tuple[str, str]) -> dict[str, object]:
-    """Return a ``todowrite`` call recording ``(content, status)`` todos."""
-    return tool(
-        "todowrite",
-        metadata={
-            "todos": [
-                {"content": content, "status": status, "priority": "medium"}
-                for content, status in todos
-            ]
-        },
-        call_id="todo",
-    )

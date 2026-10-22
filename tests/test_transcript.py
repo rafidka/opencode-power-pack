@@ -10,7 +10,6 @@ from opencode_power_pack.models import (
     Transcript,
     TranscriptMessage,
     TranscriptPart,
-    TranscriptTodo,
 )
 from opencode_power_pack.transcript import (
     TranscriptOptions,
@@ -552,25 +551,6 @@ def test_multiple_transcripts_have_no_separator() -> None:
     assert boundary >= 0
 
 
-def test_todos_rendered_with_status_and_omitted_when_none() -> None:
-    transcript = _transcript(
-        todos=(
-            TranscriptTodo(content="Investigate the parser", status="completed"),
-            TranscriptTodo(content="Write the tests", status="pending"),
-            TranscriptTodo(content="Untouched", status=None),
-        )
-    )
-    output = render_transcript(transcript)
-    assert '<oc-todo status="completed">Investigate the parser</oc-todo>' in output
-    assert '<oc-todo status="pending">Write the tests</oc-todo>' in output
-    assert "<oc-todo>Untouched</oc-todo>" in output
-
-
-def test_todos_omitted_when_empty() -> None:
-    transcript = _transcript(todos=())
-    assert "<oc-todos" not in render_transcript(transcript)
-
-
 def test_metadata_attributes_omitted_for_none_values() -> None:
     session = Session(
         id="minimal",
@@ -648,7 +628,6 @@ def test_blank_title_is_omitted_not_rendered_as_blank() -> None:
 def test_output_ends_with_single_trailing_newline_and_no_trailing_ws() -> None:
     grandchild = _transcript(
         session=_session(id="session-gc", title="Grandchild"),
-        todos=(TranscriptTodo(content="Nested todo", status="completed"),),
     )
     child = _transcript(
         session=_session(id="session-child", title="Child session"),
@@ -677,10 +656,6 @@ def test_output_ends_with_single_trailing_newline_and_no_trailing_ws() -> None:
                 error="MessageAbortedError",
             ),
         ),
-        todos=(
-            TranscriptTodo(content="Investigate", status="completed"),
-            TranscriptTodo(content="Ship", status="in_progress"),
-        ),
         children=(grandchild,),
     )
     root = _transcript(
@@ -692,7 +667,6 @@ def test_output_ends_with_single_trailing_newline_and_no_trailing_ws() -> None:
                 parts=(TranscriptPart(kind=PartKind.TEXT, text="Root message"),),
             ),
         ),
-        todos=(TranscriptTodo(content="Root todo", status="pending"),),
         children=(child,),
     )
 

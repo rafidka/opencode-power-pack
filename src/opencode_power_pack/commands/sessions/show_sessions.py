@@ -60,10 +60,6 @@ def show_sessions(
             help="Include the full output of every tool call.",
         ),
     ] = False,
-    include_todos: Annotated[
-        bool,
-        typer.Option("--include-todos", help="Append the session todo list."),
-    ] = False,
     include_children: Annotated[
         bool,
         typer.Option(
@@ -100,7 +96,6 @@ def show_sessions(
             include_reasoning=include_reasoning,
             include_tool_inputs=include_tool_inputs,
             include_tool_outputs=include_tool_outputs,
-            include_todos=include_todos,
             include_children=include_children,
             max_tool_chars=max_tool_chars,
         )
@@ -115,7 +110,6 @@ def _run_show_sessions(
     include_reasoning: bool,
     include_tool_inputs: bool,
     include_tool_outputs: bool,
-    include_todos: bool,
     include_children: bool,
     max_tool_chars: int,
     stdin: IO[str] | None = None,
@@ -149,7 +143,6 @@ def _run_show_sessions(
         targets = resolver.resolve_all(selectors)
         query = TranscriptQuery(
             session_ids=tuple(session.id for session in targets),
-            include_todos=include_todos,
             include_children=include_children,
         )
         transcripts = database.fetch_transcripts(query)

@@ -4,7 +4,7 @@ import sqlite3
 from collections.abc import Mapping
 
 from ..models import Session, Transcript, TranscriptQuery
-from .messages import session_messages, session_todos
+from .messages import session_messages
 
 
 def session_transcripts(
@@ -33,7 +33,6 @@ def _build_transcript(
     ancestors: frozenset[str],
 ) -> Transcript:
     messages = session_messages(connection, session.id)
-    todos = session_todos(connection, session.id) if query.include_todos else ()
     children: tuple[Transcript, ...] = ()
     if query.include_children:
         next_ancestors = ancestors | {session.id}
@@ -51,6 +50,4 @@ def _build_transcript(
             if child_id not in next_ancestors
             and (child_session := sessions_by_id.get(child_id)) is not None
         )
-    return Transcript(
-        session=session, messages=messages, todos=todos, children=children
-    )
+    return Transcript(session=session, messages=messages, children=children)

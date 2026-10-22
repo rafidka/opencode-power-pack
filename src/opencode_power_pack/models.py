@@ -77,7 +77,6 @@ class SearchSource(StrEnum):
 
     TITLE = "title"
     TEXT = "text"
-    TODO = "todo"
     REASONING = "reasoning"
     TOOL_INPUT = "tool-input"
     TOOL_OUTPUT = "tool-output"
@@ -270,13 +269,6 @@ class TranscriptMessage(RecordModel):
     parts: tuple[TranscriptPart, ...] = ()
 
 
-class TranscriptTodo(RecordModel):
-    """A todo entry captured for a session."""
-
-    content: str
-    status: str | None = None
-
-
 class Transcript(RecordModel):
     """A full conversation for one session, with any spawned sub-agent transcripts.
 
@@ -286,7 +278,6 @@ class Transcript(RecordModel):
 
     session: Session
     messages: tuple[TranscriptMessage, ...] = ()
-    todos: tuple[TranscriptTodo, ...] = ()
     children: tuple[Transcript, ...] = ()
 
 
@@ -299,5 +290,4 @@ class TranscriptQuery(ValueModel):
     """
 
     session_ids: tuple[str, ...] = ()
-    include_todos: bool = False
     include_children: bool = False

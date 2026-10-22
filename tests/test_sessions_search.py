@@ -144,7 +144,6 @@ def test_search_collects_repeated_filters_and_all_sources(
             "model-x",
             "--in",
             "title",
-            "--include-todos",
             "--include-reasoning",
             "--include-tool-inputs",
             "--include-tool-outputs",
@@ -167,7 +166,6 @@ def test_search_collects_repeated_filters_and_all_sources(
     assert query.sources == frozenset(
         {
             SearchSource.TITLE,
-            SearchSource.TODO,
             SearchSource.REASONING,
             SearchSource.TOOL_INPUT,
             SearchSource.TOOL_OUTPUT,
@@ -404,7 +402,6 @@ def test_semantic_json_output(semantic_api: dict[str, object]) -> None:
 @pytest.mark.parametrize(
     "option",
     [
-        "--include-todos",
         "--include-reasoning",
         "--include-tool-inputs",
         "--include-tool-outputs",

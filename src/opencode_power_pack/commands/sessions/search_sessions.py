@@ -131,7 +131,6 @@ def _search(
         list[_OrdinarySource] | None,
         typer.Option("--in", help="Search title, text, or an opted-in content source."),
     ] = None,
-    include_todos: Annotated[bool, typer.Option("--include-todos")] = False,
     include_reasoning: Annotated[bool, typer.Option("--include-reasoning")] = False,
     include_tool_inputs: Annotated[bool, typer.Option("--include-tool-inputs")] = False,
     include_tool_outputs: Annotated[
@@ -163,7 +162,6 @@ def _search(
         )
     if semantic:
         unsupported_options = (
-            (include_todos, "--include-todos"),
             (include_reasoning, "--include-reasoning"),
             (include_tool_inputs, "--include-tool-inputs"),
             (include_tool_outputs, "--include-tool-outputs"),
@@ -182,8 +180,6 @@ def _search(
         raise typer.BadParameter("--since must be earlier than --until")
 
     selected_sources = {SearchSource(source) for source in (sources or _OrdinarySource)}
-    if include_todos:
-        selected_sources.add(SearchSource.TODO)
     if include_reasoning:
         selected_sources.add(SearchSource.REASONING)
     if include_tool_inputs:

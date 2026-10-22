@@ -277,18 +277,6 @@ def test_search_defaults_roles_sources_and_literal_unicode_matching(
     assert tool.exit_code == 0, tool.output
     assert [match["source"] for match in json_output(tool)] == ["tool-output"]
 
-    todo = invoke(
-        opencode_database,
-        "sessions",
-        "search",
-        "Investigate",
-        "--include-todos",
-        "--format",
-        "json",
-    )
-    assert todo.exit_code == 0, todo.output
-    assert [match["source"] for match in json_output(todo)] == ["todo"]
-
     literal = invoke(
         opencode_database,
         "sessions",

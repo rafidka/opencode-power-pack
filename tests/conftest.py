@@ -12,7 +12,6 @@ from opencode_v2 import (
     insert_session,
     reasoning,
     text,
-    todowrite,
     tool,
     user,
 )
@@ -121,7 +120,6 @@ def opencode_database(tmp_path: Path) -> Iterator[Path]:
             text("The assistant also mentions needle."),
             reasoning("private reasoning needle"),
             tool("grep", input="tool input needle", output="tool output needle"),
-            todowrite(("Investigate needle", "pending")),
         ),
         created=1_020,
     )
@@ -140,14 +138,6 @@ def opencode_database(tmp_path: Path) -> Iterator[Path]:
         "user",
         user("child body needle"),
         created=1_210,
-    )
-    insert_message(
-        connection,
-        "session-child",
-        "message-child-assistant",
-        "assistant",
-        assistant(todowrite(("Child todo", "completed"))),
-        created=1_220,
     )
     connection.commit()
     connection.close()

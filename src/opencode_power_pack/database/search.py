@@ -10,7 +10,7 @@ from ..models import (
     SearchSource,
     Session,
 )
-from .messages import session_messages, session_todos
+from .messages import session_messages
 
 _TEXT_SOURCES = {
     PartKind.TEXT: SearchSource.TEXT,
@@ -46,11 +46,6 @@ def search_session(
                 ):
                     if source in query.sources and tool_content is not None:
                         records.append((source, role, tool_content))
-    if SearchSource.TODO in query.sources:
-        records.extend(
-            (SearchSource.TODO, None, todo.content)
-            for todo in session_todos(connection, session.id)
-        )
     found = [
         (
             source,
@@ -98,7 +93,6 @@ def source_rank(source: SearchSource) -> int:
     return (
         SearchSource.TITLE,
         SearchSource.TEXT,
-        SearchSource.TODO,
         SearchSource.REASONING,
         SearchSource.TOOL_INPUT,
         SearchSource.TOOL_OUTPUT,

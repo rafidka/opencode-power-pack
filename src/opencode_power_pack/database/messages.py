@@ -16,7 +16,6 @@ from ..models import (
     TokenBreakdown,
     TranscriptMessage,
     TranscriptPart,
-    TranscriptTodo,
 )
 from ._utils import content, json_object, string
 
@@ -44,8 +43,6 @@ title is derived from the call's own input instead.
 """
 
 _TITLE_LIMIT = 120
-
-TODO_TOOL = "todowrite"
 
 
 def message_rows(
@@ -114,36 +111,6 @@ def message_from_row(row: sqlite3.Row) -> TranscriptMessage | None:
             ),
         )
     return None
-
-
-def session_todos(
-    connection: sqlite3.Connection, session_id: str
-) -> tuple[TranscriptTodo, ...]:
-    """Return a session's current todo list.
-
-    V2 keeps no todo table; the list is the one recorded by the most recent
-    ``todowrite`` call, which always carries the complete list.
-    """
-    rows = connection.execute(
-        "SELECT data FROM session_message "
-        "WHERE session_id = ? AND type = ? AND instr(data, ?) > 0 "
-        "ORDER BY seq DESC",
-        (session_id, ASSISTANT, f'"{TODO_TOOL}"'),
-    )
-    for row in rows:
-        for block in reversed(content_blocks(json_object(row["data"]))):
-            if string(block.get("name")) != TODO_TOOL:
-                continue
-            metadata = _object(_object(block.get("state")).get("metadata"))
-            todos = metadata.get("todos")
-            if not isinstance(todos, list):
-                continue
-            return tuple(
-                TranscriptTodo(content=text, status=string(item.get("status")))
-                for item in _objects(cast("list[object]", todos))
-                if (text := string(item.get("content"))) is not None
-            )
-    return ()
 
 
 def content_blocks(data: dict[str, object]) -> tuple[dict[str, object], ...]:

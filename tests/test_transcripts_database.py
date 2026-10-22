@@ -10,7 +10,6 @@ from opencode_v2 import (
     insert_session,
     reasoning,
     text,
-    todowrite,
     tool,
     user,
 )
@@ -234,40 +233,6 @@ def test_bookkeeping_messages_are_skipped_and_compactions_are_kept(
     ]
     assert messages[1].parts[0].kind is PartKind.COMPACTION
     assert messages[1].parts[0].compaction_auto is True
-
-
-def test_todos_come_from_the_latest_todowrite_and_respect_the_flag(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "opencode.db"
-    connection = _database(path, "s")
-    insert_message(
-        connection, "s", "m1", "assistant", assistant(todowrite(("stale", "pending")))
-    )
-    insert_message(
-        connection,
-        "s",
-        "m2",
-        "assistant",
-        assistant(todowrite(("first", "completed"), ("second", "pending"))),
-    )
-    insert_message(connection, "s", "m3", "assistant", assistant(text("done")))
-    connection.commit()
-    connection.close()
-
-    with OpenCodeDatabase(path) as database:
-        without_todos = database.fetch_transcripts(
-            TranscriptQuery(session_ids=("s",), include_todos=False)
-        )
-        with_todos = database.fetch_transcripts(
-            TranscriptQuery(session_ids=("s",), include_todos=True)
-        )
-
-    assert without_todos[0].todos == ()
-    assert [(todo.content, todo.status) for todo in with_todos[0].todos] == [
-        ("first", "completed"),
-        ("second", "pending"),
-    ]
 
 
 def test_children_are_inlined_only_when_requested(tmp_path: Path) -> None:

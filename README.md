@@ -120,9 +120,6 @@ Here's the guide. One decision up front, because the two failure modes overlap.
 <oc-tool name="subagent" status="completed" title="Explore the codebase" session="ses_04fccdc8cffe">
 </oc-tool>
 </oc-message>
-<oc-todos>
-<oc-todo status="completed">Investigate the parser</oc-todo>
-</oc-todos>
 </oc-session>
 ```
 
@@ -166,8 +163,7 @@ a 4,000–11,000 token transcript into a 40,000–350,000 token one; they are
 opt-in via `--include-tool-inputs` and `--include-tool-outputs`, each capped
 per call by `--max-tool-chars` (default 2000, 0 for unlimited). Reasoning is
 omitted by default, consistent with `sessions search`, and included with
-`--include-reasoning`. `--include-todos` appends the session todo list, taken
-from the most recent `todowrite` call. OpenCode's own reminders and notices are
+`--include-reasoning`. OpenCode's own reminders and notices are
 not part of the transcript; compactions appear as a `compaction` message.
 
 ### Delete
@@ -212,12 +208,12 @@ op2 sessions search "migration failure"
 # Search the current repository with a shorter snippet
 op2 sessions search "rate limit" --cwd --snippet-length 120
 
-# Search only titles and opted-in todo content
-op2 sessions search "deploy" --in title --include-todos --format json
+# Search titles and opted-in tool output
+op2 sessions search "deploy" --in title --include-tool-outputs --format json
 ```
 
 Searches title and text by default. `--in title` or `--in text` restricts the
-ordinary sources; `--include-todos`, `--include-reasoning`,
+ordinary sources; `--include-reasoning`,
 `--include-tool-inputs`, and `--include-tool-outputs` opt into additional
 content. Use repeated `--role user` or `--role assistant` to filter message
 content. Search also accepts the list repository, archive, session, and time
@@ -254,19 +250,19 @@ safe, actionable status guidance without exposing request content or credentials
 Semantic search supports the usual title/text selection, `--role`, repository,
 session, archive, agent/provider/model, and time filters. It returns 10 results
 by default; use `-n`/`--max-count` to change that. `--case-sensitive` and the
-sensitive `--include-todos`, `--include-reasoning`, `--include-tool-inputs`, and
+sensitive `--include-reasoning`, `--include-tool-inputs`, and
 `--include-tool-outputs` flags cannot be used with `--semantic`.
 
 ## Privacy and performance
 
-The CLI searches current materialized session data, not event history. Todos,
-reasoning, and tool input/output may be sensitive or large, so they are omitted
+The CLI searches current materialized session data, not event history.
+Reasoning and tool input/output may be sensitive or large, so they are omitted
 unless explicitly requested. Broad searches scan selected session content.
-`sessions show` follows the same rule: reasoning, todos, and tool inputs and
+`sessions show` follows the same rule: reasoning and tool inputs and
 outputs are omitted unless explicitly requested.
 
 For semantic indexing, only session titles and product-visible user/assistant
-text are sent to Cohere. Reasoning, todos, tool inputs, and tool outputs are
+text are sent to Cohere. Reasoning, tool inputs, and tool outputs are
 excluded. Credentials are never stored in the semantic sidecar.
 
 OpenCode's database remains read-only for every reading command. The derived

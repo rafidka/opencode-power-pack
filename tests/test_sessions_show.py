@@ -194,20 +194,6 @@ def test_max_tool_chars_truncates_tool_output(opencode_database: Path) -> None:
     assert int(match.group(1)) == len("tool output needle") - 10
 
 
-def test_include_todos_appends_the_todo_list(opencode_database: Path) -> None:
-    default = invoke(opencode_database, "sessions", "show", "session-root")
-    assert default.exit_code == 0, default.output
-    assert "<oc-todos>" not in default.stdout
-    assert "Investigate needle" not in default.stdout
-
-    with_todos = invoke(
-        opencode_database, "sessions", "show", "session-root", "--include-todos"
-    )
-    assert with_todos.exit_code == 0, with_todos.output
-    assert "<oc-todos>" in with_todos.stdout
-    assert "Investigate needle" in with_todos.stdout
-
-
 def test_include_children_nests_child_session_in_the_spawning_tool(
     tmp_path: Path,
 ) -> None:
@@ -321,7 +307,6 @@ def test_no_arguments_with_a_tty_stdin_is_a_usage_error(
             include_reasoning=False,
             include_tool_inputs=False,
             include_tool_outputs=False,
-            include_todos=False,
             include_children=False,
             max_tool_chars=2000,
             stdin=_FakeTTYStdin(),
