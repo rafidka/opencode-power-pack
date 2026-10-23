@@ -52,6 +52,14 @@ def _grep(
     trivial_only: Annotated[
         bool, typer.Option("--trivial-only", help="Search trivial sessions only.")
     ] = False,
+    excluded: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--exclude",
+            metavar="SESSION",
+            help="Leave out SESSION, its parents, and its sub-agent sessions.",
+        ),
+    ] = None,
     agents: Annotated[list[str] | None, typer.Option("--agent")] = None,
     providers: Annotated[list[str] | None, typer.Option("--provider")] = None,
     models: Annotated[list[str] | None, typer.Option("--model")] = None,
@@ -101,6 +109,7 @@ def _grep(
             archived_only=archived_only,
             include_trivial=include_trivial,
             trivial_only=trivial_only,
+            excluded=excluded or (),
             agents=agents or (),
             providers=providers or (),
             models=models or (),

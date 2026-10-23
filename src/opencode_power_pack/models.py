@@ -177,6 +177,7 @@ class SessionFilter(ValueModel):
     include_children: bool = False
     archive_mode: ArchiveMode = ArchiveMode.ACTIVE
     trivial_mode: TrivialMode = TrivialMode.SUBSTANTIVE
+    excluded_session_ids: frozenset[str] = frozenset()
     agents: frozenset[str] = frozenset()
     providers: frozenset[str] = frozenset()
     models: frozenset[str] = frozenset()

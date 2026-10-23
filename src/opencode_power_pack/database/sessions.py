@@ -68,6 +68,8 @@ def matches_filters(session: Session, filters: SessionFilter) -> bool:
     """Return whether a session satisfies common list and search filters."""
     if not filters.include_children and session.parent_id is not None:
         return False
+    if session.id in filters.excluded_session_ids:
+        return False
     if filters.archive_mode is ArchiveMode.ACTIVE and session.archived:
         return False
     if filters.archive_mode is ArchiveMode.ARCHIVED and not session.archived:

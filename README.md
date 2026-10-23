@@ -269,6 +269,11 @@ content. It also accepts the list repository, archive, trivial, session, and tim
 filters, `-n`/`--max-count` (default 5), `--snippet-length`, and the `table`,
 `json`, or `jsonl` output formats.
 
+`--exclude SESSION`, on both search and grep, leaves out a session together
+with its parents and sub-agent sessions. Inside OpenCode,
+`--exclude "$OPENCODE_SESSION_ID"` keeps the running conversation out of its
+own results.
+
 ### Grep
 
 `sessions grep` finds sessions containing literal text. It needs no API key
@@ -320,6 +325,21 @@ and embed only new or modified chunks. Unchanged vectors are retained, while
 removed chunks and sessions are deleted. Initial indexing can make paid API
 calls; later searches against an unchanged source embed only the query and rerank
 its candidates.
+
+## Skills
+
+`skills/` holds OpenCode skills built on `op2`:
+
+- `recall` searches past sessions and distilled notes before an answer is
+  worked out again. Its description asks the agent to use it on its own, so
+  no prompt is needed.
+
+Install a skill globally by linking it into OpenCode's skills directory, with
+`op2` on `PATH`:
+
+```bash
+ln -s "$PWD/skills/recall" ~/.config/opencode/skills/recall
+```
 
 ## Development
 

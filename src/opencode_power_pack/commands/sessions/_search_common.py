@@ -18,6 +18,7 @@ from ...errors import TimeParseError
 from ...models import ArchiveMode, Session, SessionFilter, TrivialMode
 from ...output import emit_table
 from ...repositories import RepositoryResolver
+from ...session_selectors import SessionResolver, selectors_from_arguments
 from ...timeparse import parse_time
 
 _WHITESPACE = re.compile(r"\s+")
@@ -49,6 +50,7 @@ def session_filter(
     archived_only: bool,
     include_trivial: bool,
     trivial_only: bool,
+    excluded: Sequence[str] = (),
     agents: Iterable[str],
     providers: Iterable[str],
     models: Iterable[str],
@@ -80,17 +82,52 @@ def session_filter(
             repository_ids = frozenset({resolver.resolve_cwd(Path.cwd()).project_id})
         else:
             repository_ids = resolver.resolve_many(repositories)
+        excluded_ids = (
+            session_trees(database.all_sessions(), excluded)
+            if excluded
+            else frozenset[str]()
+        )
     return SessionFilter(
         repository_project_ids=repository_ids,
         include_children=include_children,
         archive_mode=archive_mode,
         trivial_mode=trivial_mode(include_trivial, trivial_only),
+        excluded_session_ids=excluded_ids,
         agents=frozenset(agents),
         providers=frozenset(providers),
         models=frozenset(models),
         since=since_ms,
         until=until_ms,
     )
+
+
+def session_trees(
+    sessions: Iterable[Session], selectors: Sequence[str]
+) -> frozenset[str]:
+    """Return every session in the trees containing the selected sessions.
+
+    A sub-agent's search excludes the conversation that started it, and a root
+    session's search excludes the sub-agents it started.
+    """
+    known = tuple(sessions)
+    parents = {session.id: session.parent_id for session in known}
+    children: dict[str, list[str]] = {}
+    for session in known:
+        if session.parent_id is not None:
+            children.setdefault(session.parent_id, []).append(session.id)
+    resolver = SessionResolver(known)
+    tree: set[str] = set()
+    for selector in selectors_from_arguments(selectors):
+        root = resolver.resolve(selector).id
+        while (parent := parents.get(root)) is not None and parent in parents:
+            root = parent
+        pending = [root]
+        while pending:
+            current = pending.pop()
+            if current not in tree:
+                tree.add(current)
+                pending.extend(children.get(current, ()))
+    return frozenset(tree)
 
 
 def trivial_mode(include_trivial: bool, trivial_only: bool) -> TrivialMode:

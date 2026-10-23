@@ -189,3 +189,51 @@ def test_grep_has_no_semantic_options(option: str) -> None:
 
     assert result.exit_code == 2
     assert "No such option" in result.output
+
+
+@pytest.mark.parametrize("excluded", ["session-root", "session-root-second"])
+def test_exclude_leaves_out_the_whole_session_tree(
+    opencode_database: Path, excluded: str
+) -> None:
+    def ids(*options: str) -> set[str]:
+        result = runner.invoke(
+            cli.app,
+            [
+                "--database",
+                str(opencode_database),
+                "sessions",
+                "grep",
+                "needle",
+                "--include-children",
+                "--format",
+                "jsonl",
+                *options,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        return {
+            json.loads(line)["session"]["id"] for line in result.stdout.splitlines()
+        }
+
+    assert "session-root" in ids()
+    remaining = ids("--exclude", excluded)
+    assert "session-root" not in remaining
+    assert "session-root-second" not in remaining
+    assert "session-child" in remaining
+
+
+def test_exclude_rejects_unknown_sessions(opencode_database: Path) -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "--database",
+            str(opencode_database),
+            "sessions",
+            "grep",
+            "needle",
+            "--exclude",
+            "missing",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "no session matches" in result.output
