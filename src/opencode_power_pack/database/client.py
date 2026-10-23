@@ -9,12 +9,14 @@ from urllib.parse import quote
 
 from ..errors import DatabaseError
 from ..models import (
+    ActivityQuery,
     ArchiveMode,
     ListSessionsQuery,
     Repository,
     SearchSessionMatch,
     SearchSessionsQuery,
     Session,
+    SessionActivity,
     SessionFilter,
     Transcript,
     TranscriptQuery,
@@ -28,6 +30,7 @@ from ..semantic.documents import (
     make_semantic_documents,
 )
 from ._utils import json_object, string
+from .activity import session_activity
 from .messages import ASSISTANT, USER, content_blocks
 from .search import search_session, sort_and_limit_matches
 from .sessions import filtered_sessions, sort_and_limit_sessions
@@ -184,6 +187,11 @@ class OpenCodeDatabase:
         return sort_and_limit_matches(
             [match for match in matches if match is not None], query
         )
+
+    def session_activity(self, query: ActivityQuery) -> tuple[SessionActivity, ...]:
+        """Return what root sessions did within a time window."""
+        with self._read_transaction():
+            return session_activity(self._connection_or_error(), query)
 
     def fetch_transcripts(self, query: TranscriptQuery) -> tuple[Transcript, ...]:
         """Return full conversation transcripts for the requested session IDs.

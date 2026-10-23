@@ -301,3 +301,42 @@ class TranscriptQuery(ValueModel):
 
     session_ids: tuple[str, ...] = ()
     include_children: bool = False
+
+
+class CreatedPullRequest(RecordModel):
+    """A pull request created by ``gh pr create`` or ``gh stack submit``.
+
+    ``gh stack submit`` reports a number and branch but no URL, so ``url`` is
+    absent for those; ``directory`` is where the command ran, for looking the
+    pull request up with ``gh``.
+    """
+
+    number: int | None = None
+    url: str | None = None
+    branch: str | None = None
+    directory: str | None = None
+
+
+class SessionActivity(RecordModel):
+    """What one root session, with its sub-agents, did within a time window.
+
+    ``active_days`` are local dates, in the requested time zone, on which a user
+    message was sent. ``tickets`` are ordered by how often they were mentioned.
+    """
+
+    session: Session
+    active_days: tuple[str, ...]
+    user_messages: int
+    tickets: tuple[str, ...] = ()
+    pull_requests_created: tuple[CreatedPullRequest, ...] = ()
+    pull_requests_referenced: tuple[str, ...] = ()
+
+
+class ActivityQuery(ValueModel):
+    """A storage-independent query for session activity within a window."""
+
+    filters: SessionFilter = Field(default_factory=SessionFilter)
+    since: int
+    until: int | None = None
+    time_zone: str
+    ticket_prefixes: frozenset[str] = frozenset()

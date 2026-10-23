@@ -297,6 +297,41 @@ filters as search. `--include-reasoning`, `--include-tool-inputs`, and
 selectors resolve only when they uniquely identify a repository; ambiguous
 selectors produce an error.
 
+### Log
+
+`sessions log` reports what sessions did within a time window, for writing a
+standup or a weekly update.
+
+```bash
+# The last 7 days, grouped by ticket, as Markdown
+op2 sessions log
+
+# Yesterday in Toronto, counting only PROJ tickets, as JSON
+op2 sessions log --since 2026-10-22T00:00:00-04:00 --tz America/Toronto \
+  --ticket-prefix PROJ --format json
+```
+
+Each root session is reported with its sub-agent sessions folded in, because
+a sub-agent often opens the pull request for work its parent planned. Only
+messages sent within the window count, so a long-running session reports only
+what happened in it. For each session the log gives:
+
+- the days a user message was sent, in `--tz` (default: the system zone
+  from `$TZ` or `/etc/localtime`, then UTC);
+- ticket keys such as `PROJ-1234` from the title, user messages, and tool
+  inputs, most mentioned first. Without `--ticket-prefix`, only upper-case
+  keys count; with it, keys match in any case, as in branch names;
+- pull requests created by `gh pr create` or `gh stack submit`. Stack
+  submissions print a number and branch rather than a URL, so a URL is filled
+  in only when the session mentions it elsewhere;
+- other pull request URLs mentioned in the conversation.
+
+Markdown groups sessions by their most-mentioned ticket, then puts the rest
+under "No ticket" by repository. `json` and `jsonl` give the same records
+ungrouped. `--repo`, `--cwd`, `--exclude-repo`, and `--include-trivial` select
+sessions. Tool outputs are scanned only for created pull requests; nothing else
+from them is printed.
+
 ## Privacy and performance
 
 The CLI searches current materialized session data, not event history.
@@ -333,12 +368,17 @@ its candidates.
 - `recall` searches past sessions and distilled notes before an answer is
   worked out again. Its description asks the agent to use it on its own, so
   no prompt is needed.
+- `work-log` writes a standup or weekly update from `op2 sessions log`,
+  enriched with Linear and GitHub, and sends it to your Slack self-DM. It
+  reads your Slack user ID from
+  `~/.config/opencode-power-pack/work-log.json`
+  (`{"slack_user_id": "U…"}`) and offers to create that file when missing.
 
 Install a skill globally by linking it into OpenCode's skills directory, with
 `op2` on `PATH`:
 
 ```bash
-ln -s "$PWD/skills/recall" ~/.config/opencode/skills/recall
+for skill in skills/*/; do ln -s "$PWD/$skill" ~/.config/opencode/skills/; done
 ```
 
 ## Development
