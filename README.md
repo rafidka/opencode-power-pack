@@ -369,17 +369,39 @@ its candidates.
   worked out again. Its description asks the agent to use it on its own, so
   no prompt is needed.
 - `work-log` writes a standup or weekly update from `op2 sessions log`,
-  enriched with Linear and GitHub, and sends it to your Slack self-DM. It
-  reads your Slack user ID from
-  `~/.config/opencode-power-pack/work-log.json`
-  (`{"slack_user_id": "U…"}`) and offers to create that file when missing.
+  enriched from GitHub and, when its CLI is installed, Linear. It shows the
+  update in chat and, when configured and a Slack tool is available, sends it
+  to you on Slack.
+- `distill` turns sessions into topic notes in `~/notes/opencode`
+  (`$OP2_NOTES_DIR` to change it), a local git repository it creates on first
+  use and never pushes. It updates an existing note on the same topic rather
+  than adding another, and can backfill notes from many past sessions.
 
 Install a skill globally by linking it into OpenCode's skills directory, with
 `op2` on `PATH`:
 
 ```bash
-for skill in skills/*/; do ln -s "$PWD/$skill" ~/.config/opencode/skills/; done
+for skill in skills/*/; do ln -s "$PWD/${skill%/}" ~/.config/opencode/skills/; done
 ```
+
+Skills read optional personal settings from
+`~/.config/opencode-power-pack/config.json`, so nothing personal lives in the
+skills themselves. Every field is optional:
+
+```json
+{
+  "time_zone": "America/Toronto",
+  "slack_user_id": "U0123456789",
+  "exclude_repos": ["scratch"]
+}
+```
+
+- `time_zone`: the zone `work-log` uses for days and its window. Defaults to
+  the system zone, which on a remote machine is often UTC.
+- `slack_user_id`: your Slack user ID, for `work-log` to send the update to
+  you. Without it, the update is shown in chat only.
+- `exclude_repos`: repositories whose sessions `work-log` leaves out, such as
+  automated jobs.
 
 ## Development
 
