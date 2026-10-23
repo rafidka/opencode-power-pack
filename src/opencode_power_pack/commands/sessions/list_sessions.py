@@ -17,6 +17,7 @@ from opencode_power_pack.models import (
     Session,
     SessionFilter,
     SortDirection,
+    TrivialMode,
 )
 from opencode_power_pack.output import (
     emit_json_array,
@@ -62,6 +63,16 @@ def list_sessions(
     archived_only: Annotated[
         bool,
         typer.Option("--archived-only", help="Include only archived sessions."),
+    ] = False,
+    include_trivial: Annotated[
+        bool,
+        typer.Option(
+            "--include-trivial", help="Include substantive and trivial sessions."
+        ),
+    ] = False,
+    trivial_only: Annotated[
+        bool,
+        typer.Option("--trivial-only", help="Include only trivial sessions."),
     ] = False,
     agents: Annotated[
         list[str] | None,
@@ -113,6 +124,8 @@ def list_sessions(
             include_children=include_children,
             include_archived=include_archived,
             archived_only=archived_only,
+            include_trivial=include_trivial,
+            trivial_only=trivial_only,
             agents=agents or (),
             providers=providers or (),
             models=models or (),
@@ -136,6 +149,8 @@ def _run_list_sessions(
     include_children: bool,
     include_archived: bool,
     archived_only: bool,
+    include_trivial: bool,
+    trivial_only: bool,
     agents: Sequence[str],
     providers: Sequence[str],
     models: Sequence[str],
@@ -149,6 +164,8 @@ def _run_list_sessions(
         raise UsageError("--repo cannot be used with --cwd")
     if include_archived and archived_only:
         raise UsageError("--include-archived cannot be used with --archived-only")
+    if include_trivial and trivial_only:
+        raise UsageError("--include-trivial cannot be used with --trivial-only")
 
     since_timestamp = None if since is None else parse_time(since)
     until_timestamp = None if until is None else parse_time(until)
@@ -165,6 +182,12 @@ def _run_list_sessions(
         archive_mode = ArchiveMode.ALL
     else:
         archive_mode = ArchiveMode.ACTIVE
+    if trivial_only:
+        trivial_mode = TrivialMode.TRIVIAL
+    elif include_trivial:
+        trivial_mode = TrivialMode.ALL
+    else:
+        trivial_mode = TrivialMode.SUBSTANTIVE
 
     from opencode_power_pack.cli import get_app_context
 
@@ -177,6 +200,7 @@ def _run_list_sessions(
                 repository_project_ids=project_ids,
                 include_children=include_children,
                 archive_mode=archive_mode,
+                trivial_mode=trivial_mode,
                 agents=frozenset(agents),
                 providers=frozenset(providers),
                 models=frozenset(models),

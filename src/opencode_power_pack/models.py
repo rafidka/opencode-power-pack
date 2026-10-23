@@ -55,6 +55,14 @@ class ArchiveMode(StrEnum):
     ALL = "all"
 
 
+class TrivialMode(StrEnum):
+    """Whether a query includes substantive, trivial, or all sessions."""
+
+    SUBSTANTIVE = "substantive"
+    TRIVIAL = "trivial"
+    ALL = "all"
+
+
 class ListSort(StrEnum):
     """Session fields available for list ordering."""
 
@@ -168,6 +176,7 @@ class SessionFilter(ValueModel):
     repository_project_ids: frozenset[str] = frozenset()
     include_children: bool = False
     archive_mode: ArchiveMode = ArchiveMode.ACTIVE
+    trivial_mode: TrivialMode = TrivialMode.SUBSTANTIVE
     agents: frozenset[str] = frozenset()
     providers: frozenset[str] = frozenset()
     models: frozenset[str] = frozenset()

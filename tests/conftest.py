@@ -19,6 +19,18 @@ from opencode_v2 import (
 from opencode_power_pack.models import SearchSessionMatch, SearchSource, Session
 
 
+@pytest.fixture(autouse=True)
+def recent_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Treat synthetic sessions as recently used, so none is hidden as trivial.
+
+    Fixture timestamps are a few seconds after the epoch; tests of trivial
+    session detection override this clock.
+    """
+    from opencode_power_pack.database import sessions
+
+    monkeypatch.setattr(sessions, "now_ms", lambda: 10_000)
+
+
 @pytest.fixture
 def opencode_database(tmp_path: Path) -> Iterator[Path]:
     """Create a small, synthetic OpenCode V2-shaped database."""

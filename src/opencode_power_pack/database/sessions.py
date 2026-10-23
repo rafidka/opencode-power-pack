@@ -11,8 +11,10 @@ from ..models import (
     SessionFilter,
     SortDirection,
     TokenBreakdown,
+    TrivialMode,
 )
 from ._utils import json_object, string
+from .trivial import now_ms, trivial_session_ids
 
 
 def filtered_sessions(
@@ -25,7 +27,12 @@ def filtered_sessions(
     }
     rows = connection.execute("SELECT * FROM session_v2").fetchall()
     sessions = [session_from_row(row, projects.get(row["project_id"])) for row in rows]
-    return [session for session in sessions if matches_filters(session, filters)]
+    sessions = [session for session in sessions if matches_filters(session, filters)]
+    if filters.trivial_mode is TrivialMode.ALL:
+        return sessions
+    trivial = trivial_session_ids(connection, sessions, now_ms())
+    keep_trivial = filters.trivial_mode is TrivialMode.TRIVIAL
+    return [session for session in sessions if (session.id in trivial) == keep_trivial]
 
 
 def session_from_row(row: sqlite3.Row, repository: str | None) -> Session:

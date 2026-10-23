@@ -57,7 +57,7 @@ op2 sessions list --format jsonl --sort updated --reverse
 ```
 
 `--repo` may be repeated and cannot be combined with `--cwd`. By default only
-active root sessions are returned. Use `--include-children`,
+active, substantive root sessions are returned. Use `--include-children`,
 `--include-archived`, or `--archived-only` as needed. Common filters are
 `--agent`, `--provider`, `--model`, `--since`, and `--until` (which is
 exclusive). Sort with `--sort` (`updated`, `created`, `cost`, `tokens`, or
@@ -66,6 +66,27 @@ exclusive). Sort with `--sort` (`updated`, `created`, `cost`, `tokens`, or
 `table` is meant for reading. On a terminal it renders a bordered table; when
 stdout is redirected or piped it prints the same columns as tab-separated
 values with no header, so results can be fed to other commands.
+
+### Trivial sessions
+
+Throwaway sessions, such as tests and greetings, are hidden from `sessions
+list`, `sessions search`, and `sessions grep`. `--include-trivial` shows them
+alongside everything else and `--trivial-only` shows nothing else, which makes
+cleaning them up a pipe:
+
+```bash
+op2 sessions list --trivial-only
+op2 sessions list --trivial-only | op2 sessions delete --yes
+```
+
+A session is trivial when all of these hold: it is a root session with no
+sub-agent sessions, it has not been updated for 24 hours, it made no tool
+calls, it has at most one user message, and its user and assistant text is
+shorter than 300 characters in total. Titles are ignored, because OpenCode
+titles a session from its first message, so one titled "Test message" may
+have gone on to do real work. Session selectors in `show` and `delete` still
+resolve trivial sessions. The thresholds are constants in
+`database/trivial.py`.
 
 ### Show
 
@@ -244,7 +265,7 @@ constants in `semantic/service.py`.
 
 Search covers titles and user/assistant text; `--in title` or `--in text`
 restricts that, and repeated `--role user` or `--role assistant` filters message
-content. It also accepts the list repository, archive, session, and time
+content. It also accepts the list repository, archive, trivial, session, and time
 filters, `-n`/`--max-count` (default 5), `--snippet-length`, and the `table`,
 `json`, or `jsonl` output formats.
 

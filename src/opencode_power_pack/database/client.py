@@ -18,6 +18,7 @@ from ..models import (
     SessionFilter,
     Transcript,
     TranscriptQuery,
+    TrivialMode,
 )
 from ..semantic.documents import (
     SemanticDocument,
@@ -162,7 +163,11 @@ class OpenCodeDatabase:
             return tuple(
                 filtered_sessions(
                     self._connection_or_error(),
-                    SessionFilter(include_children=True, archive_mode=ArchiveMode.ALL),
+                    SessionFilter(
+                        include_children=True,
+                        archive_mode=ArchiveMode.ALL,
+                        trivial_mode=TrivialMode.ALL,
+                    ),
                 )
             )
 
@@ -193,7 +198,11 @@ class OpenCodeDatabase:
                 session.id: session
                 for session in filtered_sessions(
                     connection,
-                    SessionFilter(include_children=True, archive_mode=ArchiveMode.ALL),
+                    SessionFilter(
+                        include_children=True,
+                        archive_mode=ArchiveMode.ALL,
+                        trivial_mode=TrivialMode.ALL,
+                    ),
                 )
             }
             return session_transcripts(connection, query, sessions_by_id)

@@ -15,7 +15,7 @@ import typer
 
 from ...database import OpenCodeDatabase
 from ...errors import TimeParseError
-from ...models import ArchiveMode, Session, SessionFilter
+from ...models import ArchiveMode, Session, SessionFilter, TrivialMode
 from ...output import emit_table
 from ...repositories import RepositoryResolver
 from ...timeparse import parse_time
@@ -47,6 +47,8 @@ def session_filter(
     include_children: bool,
     include_archived: bool,
     archived_only: bool,
+    include_trivial: bool,
+    trivial_only: bool,
     agents: Iterable[str],
     providers: Iterable[str],
     models: Iterable[str],
@@ -60,6 +62,8 @@ def session_filter(
         raise typer.BadParameter(
             "--include-archived cannot be used with --archived-only"
         )
+    if include_trivial and trivial_only:
+        raise typer.BadParameter("--include-trivial cannot be used with --trivial-only")
     since_ms = _parse_time_option(since, "--since")
     until_ms = _parse_time_option(until, "--until")
     if since_ms is not None and until_ms is not None and since_ms >= until_ms:
@@ -80,12 +84,22 @@ def session_filter(
         repository_project_ids=repository_ids,
         include_children=include_children,
         archive_mode=archive_mode,
+        trivial_mode=trivial_mode(include_trivial, trivial_only),
         agents=frozenset(agents),
         providers=frozenset(providers),
         models=frozenset(models),
         since=since_ms,
         until=until_ms,
     )
+
+
+def trivial_mode(include_trivial: bool, trivial_only: bool) -> TrivialMode:
+    """Map the trivial-session options to a filter mode."""
+    if trivial_only:
+        return TrivialMode.TRIVIAL
+    if include_trivial:
+        return TrivialMode.ALL
+    return TrivialMode.SUBSTANTIVE
 
 
 def selected_roles(roles: Sequence[Role] | None) -> frozenset[str]:
