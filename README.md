@@ -117,28 +117,28 @@ abridged here to a session, one message, and a couple of tool calls:
 
 ```
 <oc-session
-  id="ses_f76551cebffexrwFNP7m17fSwk"
-  title="Conversation dump to markdown command"
-  repository="opencode-power-pack"
-  agent="orchestrate"
-  model="claude-opus-5"
-  provider="cohere-llm-gateway"
+  id="ses_0123456789abcdefghijklmn"
+  title="Flaky upload retries"
+  repository="widget"
+  agent="build"
+  model="example-model"
+  provider="example-provider"
   created="2026-09-15T18:15:03Z"
   updated="2026-09-15T18:56:21Z"
   cost="0.0000"
   tokens="1907779"
   messages="32"
 >
-<oc-message n="374" role="assistant" agent="plan" model="claude-opus-5" time="2026-09-11T19:18:04Z">
+<oc-message n="17" role="assistant" agent="plan" model="example-model" time="2026-09-15T18:31:04Z">
 <oc-text>
-Here's the guide. One decision up front, because the two failure modes overlap.
+Here's what I found. One decision up front, because the two failures overlap.
 
-## Which task exposes both
+## Which retry fails
 
-**The `uccs` project inside `submittal-review`.** Its corpus is exactly the pair you want:
+**The second upload in `sync_batch`.** It retries without backing off:
 </oc-text>
 <oc-tool name="shell" status="completed" title="git status --short" />
-<oc-tool name="subagent" status="completed" title="Explore the codebase" session="ses_04fccdc8cffe">
+<oc-tool name="subagent" status="completed" title="Explore the codebase" session="ses_abcdefghijklmn0123456789">
 </oc-tool>
 </oc-message>
 </oc-session>
